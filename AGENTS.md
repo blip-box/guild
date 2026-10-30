@@ -19,9 +19,10 @@ escaped plain text), `snapshot` (an issue or comment as a record), `tiers` (risk
 tiers from paths, diff shape and declared kinds), `ledger` (the append-only record
 format), `commands` (steward commands), `triage` (the schema, the policy, the
 templates and the one model call) and `config` (`guild.toml`). The `guildkit`
-command line chains them. Not built: the workflow templates, the oracle-check
-interface, the Planner, Builder and Reviewer roles on the Agent SDK, the drill
-runner, the ledger branch tooling and the weekly reports.
+command line chains them. The triage workflow template, the issue forms and the
+adopting guide with the oracle-check contract exist (`docs/adopting.md`). Not
+built: the Planner, Builder and Reviewer roles on the Agent SDK, the drill runner,
+the ledger branch tooling, the brakes that need it, and the weekly reports.
 
 ## Decisions
 
@@ -36,6 +37,8 @@ runner, the ledger branch tooling and the weekly reports.
 | Model IDs | Pinned in full in `guild.toml`, with a price table per ID for the ledger. The Anthropic IDs have no date suffix; partner platforms get their own entries. |
 | Agent SDK | The Python SDK's `setting_sources` defaults to loading user, project and local settings, CLAUDE.md, agents, skills and `.mcp.json` from disk. The shell must pass `setting_sources=[]` and hand over the charter, handbook and role files from the base branch itself. The SDK bundles the Claude Code CLI; pinning the SDK version pins the CLI (recorded in its `_cli_version.py`). `max_budget_usd` is a client-side estimate, not a cap. |
 | Credentials | Workload Identity Federation from GitHub Actions, through the SDK's own resolution: `id-token: write`, an identity token file and the federation variables, with no `ANTHROPIC_API_KEY` in the job. The federation rule is pinned to the repository and to `refs/heads/main`. The only hard cost cap is the workspace spend limit in the Console. |
+| Oracle check | The adopter's script, run by the intake job from the base branch with no secrets, writes one of `confirms`, `disagrees`, `not_applicable`, `not_run`, `error` (`docs/adopting.md`). Policy: a bug is accepted only on `confirms`; `disagrees` goes to a steward with the citation; `not_run` and `error` escalate to a steward, because the harness failed, not the reporter; `not_applicable` asks the reporter for a reproducer. |
+| Triggers | The triage workflow runs on `issue_comment`, which zizmor flags, with a justification comment: the text never reaches a shell or a token, the intake job holds no secret, and the model has no tools. Keep that true. |
 | Ledger | One JSON line per run with sorted keys. Every field is a number, an enumerated value, an identifier or a hash; `ledger.validate` rejects anything else, so no model text can reach it. |
 | ASCII | Python source, TOML, YAML, the role prompts and the comment templates are ASCII, so no look-alike or hidden character can change what a model or a person reads. Other tracked files may hold visible non-ASCII characters but nothing invisible or bidirectional. `tests/test_hygiene.py` checks both with `confusable`. |
 
@@ -65,8 +68,12 @@ CI runs exactly these, so a clean local run means a clean CI run.
 - `roles/`: the role prompts, one file per role. ASCII.
 - `templates/guild.toml`: the example configuration, the one the tests load.
 - `templates/comments/`: the comment templates triage posts from.
-- `templates/workflows/`: the thin workflows an adopter copies (not yet written).
-- `docs/plan.md`: the design and its decision log. `docs/research/`: the research.
+- `templates/workflows/guild-triage.yml`: the triage workflow an adopter copies.
+  It is linted by hand with zizmor and actionlint, which only scan `.github/`.
+- `templates/ISSUE_TEMPLATE/`: the issue forms; the bug form's fields are what the
+  oracle check reads.
+- `docs/plan.md`: the design and its decision log. `docs/adopting.md`: what an
+  adopter adds and what stewards set up. `docs/research/`: the research.
 - `tests/`: pytest and hypothesis. `tests/test_hygiene.py` is the character check.
 
 ## Rules
@@ -101,8 +108,8 @@ CI runs exactly these, so a clean local run means a clean CI run.
 
 Each item is its own pull request, in order:
 
-1. Workflow templates for triage, and the oracle-check interface, with the
-   confusable wiring (`guild.toml`, issue forms, workflows) as the adopter's PR.
+1. The confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the triage
+   workflow and `tools/guild_oracle_check.py`) as the adopter's PR.
 2. The Builder and Reviewer on the Agent SDK, producing patches and findings that a
    plain job applies; the Planner for features.
 3. The drill runner and the first drills from confusable's history.

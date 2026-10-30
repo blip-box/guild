@@ -1,0 +1,49 @@
+name: Feature request
+description: A change in behaviour or a new capability.
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Features are judged against the charter (CHARTER.md): a request is
+        accepted for planning when it serves a clause by ID and a Unicode
+        specification defines the behaviour. A request that serves no clause is
+        declined, naming the nearest one.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do and what stops you.
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: The behaviour you want
+      description: Inputs and outputs, with code points for non-ASCII characters.
+    validations:
+      required: true
+  - type: input
+    id: clause
+    attributes:
+      label: Charter clause
+      description: The clause this serves, by ID.
+      placeholder: C-SCOPE-5
+    validations:
+      required: true
+  - type: input
+    id: specification
+    attributes:
+      label: Specification
+      description: The standard that defines the behaviour, if any.
+      placeholder: UTS #39 section 5.4
+  - type: dropdown
+    id: ai_use
+    attributes:
+      label: Was an AI tool used to write this request?
+      options:
+        - "No"
+        - "Yes, and I checked it myself"
+        - "Yes, unchecked"
+    validations:
+      required: true

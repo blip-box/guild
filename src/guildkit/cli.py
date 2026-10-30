@@ -17,6 +17,13 @@ from typing import Any
 from guildkit import __version__, commands, config, ledger, snapshot, tiers, triage
 
 HARNESS = f"guildkit-{__version__}"
+# An API key, or workload identity federation, which the anthropic client
+# picks up from its environment variables on its own.
+CREDENTIALS = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_IDENTITY_TOKEN_FILE",
+    "ANTHROPIC_IDENTITY_TOKEN",
+)
 
 
 def _read_json(path: Path) -> Any:
@@ -97,8 +104,8 @@ def _cmd_triage(args: argparse.Namespace) -> int:
             return canned, usage
 
     else:
-        if "ANTHROPIC_API_KEY" not in os.environ:
-            print("triage: ANTHROPIC_API_KEY is not set", file=sys.stderr)
+        if not any(name in os.environ for name in CREDENTIALS):
+            print(f"triage: none of {CREDENTIALS} is set", file=sys.stderr)
             return 2
         import anthropic
 

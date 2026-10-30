@@ -140,9 +140,10 @@ def apply_policy(output: ModelOutput, oracle: Oracle) -> Record:
     """Return the decision the rules give for the model's reading.
 
     A bug is actionable only with a reproducer the oracle confirms and a
-    citation. A feature is actionable only with the charter clause it serves.
-    Security reports, questions, spam and the rest are never actionable here:
-    a steward or a template answers them.
+    citation; when the oracle could not run, a steward looks rather than the
+    reporter being asked again. A feature is actionable only with the charter
+    clause it serves. Security reports, questions, spam and the rest are never
+    actionable here: a steward or a template answers them.
     """
     if oracle not in ORACLES:
         raise TriageError(f"oracle {oracle!r}")
@@ -160,12 +161,15 @@ def apply_policy(output: ModelOutput, oracle: Oracle) -> Record:
         if oracle == "disagrees":
             template = "spec_disagrees"
             labels.append("spec disagrees")
+        elif oracle in ("not_run", "error"):
+            template = "needs_steward"
+            labels.append("needs steward")
         elif oracle == "confirms" and not missing:
             actionable = True
             template = "bug_accepted"
             labels.append(f"severity:{severity}")
         else:
-            if oracle != "confirms":
+            if oracle == "not_applicable":
                 missing.add("reproducer")
             template = "needs_info"
             labels.append("needs info")
@@ -191,11 +195,14 @@ def apply_policy(output: ModelOutput, oracle: Oracle) -> Record:
         template = "needs_steward"
         labels.append("needs steward")
 
-    outcome = (
-        "posted"
-        if actionable
-        else ("needs_info" if "needs info" in labels else "declined")
-    )
+    if actionable:
+        outcome = "posted"
+    elif "needs info" in labels:
+        outcome = "needs_info"
+    elif "needs steward" in labels:
+        outcome = "escalated"
+    else:
+        outcome = "declined"
     return {
         "kind": kind,
         "severity": severity,
