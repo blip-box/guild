@@ -76,9 +76,12 @@ jobs:
       - name: Oracle check
         # The adopter's script, from the base branch: it reads the snapshot and
         # writes one of confirms, disagrees, not_applicable, not_run, error.
+        # The adopter's own locked environment, without its dependency groups:
+        # a pinned install of the checkout, nothing from an index.
         run: |
-          if [ -x tools/guild_oracle_check.py ] || [ -f tools/guild_oracle_check.py ]; then
-            uv run --no-project --with-requirements .guild/pyproject.toml python -I tools/guild_oracle_check.py --snapshot snapshot.json --out oracle.txt || echo error > oracle.txt
+          if [ -f tools/guild_oracle_check.py ]; then
+            uv sync --locked --no-default-groups
+            uv run --no-sync python -I tools/guild_oracle_check.py --snapshot snapshot.json --out oracle.txt || echo error > oracle.txt
           else
             echo not_run > oracle.txt
           fi
