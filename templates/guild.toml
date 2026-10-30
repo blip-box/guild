@@ -1,0 +1,68 @@
+# Guild configuration for an adopting repository. Copy to the repository root
+# as guild.toml. Changing it is a tier 2 change; agents cannot change it.
+
+[guild]
+repo = "blip-box/confusable"
+charter = "CHARTER.md"
+
+[stewards]
+logins = ["atillaguzel"]
+max = 3
+
+# Risk tiers, computed by plain code from the paths a change touches. The
+# highest tier any rule gives wins; the shape of the diff can only raise it.
+# Paths on the reject list are never tiered: agents draft, a steward commits.
+[tiers.paths]
+reject = [
+    ".github/**",
+    ".claude/**",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "CHARTER.md",
+    "guild.toml",
+    "conftest.py",
+    ".pre-commit-config.yaml",
+]
+t0 = ["*.md", "LICENSES/**", "src/confusable/_data/**"]
+t1 = []
+t2 = ["pyproject.toml", "uv.lock", "tools/**", "src/confusable/__init__.py"]
+t3 = []
+default = "t1"
+
+[tiers.shape]
+tests = ["tests/**"]
+max_t0_lines = 50
+deleted_tests = "t2"
+deleted_files = "t1"
+changed_tests = "t1"
+
+# Kinds of change that paths cannot show; a plan or a steward declares them.
+[tiers.kinds]
+public_api = "t2"
+spec_departure = "t2"
+new_data_source = "t2"
+release = "t3"
+advisory = "t3"
+
+[triage]
+# Pinned in full. A change here goes through the drills first.
+model = "claude-haiku-5-5"
+# Thinking is on by default on this model and counts against max_tokens.
+max_tokens = 1500
+cap_usd = 0.10
+per_author_per_day = 3
+daily_runs = 40
+
+# US dollars per million tokens, Anthropic API list prices, for the ledger.
+# Partner platforms price differently: add their IDs with their prices.
+[models."claude-haiku-5-5"]
+input_per_mtok = 0.10
+output_per_mtok = 0.50
+cache_read_per_mtok = 0.01
+cache_write_per_mtok = 0.125
+
+[models."claude-opus-5-5"]
+input_per_mtok = 4.00
+output_per_mtok = 20.00
+cache_read_per_mtok = 0.20
+cache_write_per_mtok = 5.00

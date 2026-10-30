@@ -1,0 +1,66 @@
+# Run everything with: uv run pre-commit run --all-files
+# CI runs the same command, so a clean local run means a clean lint job.
+default_install_hook_types: [pre-commit, commit-msg]
+# Only commitlint, which sets its own stage, runs on the commit message.
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.5
+    hooks:
+      - id: uv-lock
+
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.30.1
+    hooks:
+      - id: zizmor
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        # Build with a pinned Go that pre-commit downloads, not whatever Go is
+        # on PATH: a Go older than actionlint's go.mod cannot build it.
+        language_version: 1.27.2
+
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.27.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        # A manual pin: without it nodeenv takes the first entry of nodejs.org's
+        # release index, a pre-release since Node 27's alpha, and fails to
+        # parse it. Dependabot does not bump this.
+        language_version: 24.22.1
+        additional_dependencies: ["@commitlint/config-conventional"]
+
+  # mypy runs from the project environment so it sees the locked versions.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run --frozen mypy
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true

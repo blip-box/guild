@@ -1,0 +1,107 @@
+[project]
+name = "guildkit"
+version = "0.1.0.dev0"
+description = "Guild: agent-run maintenance for open-source libraries, under human stewards."
+readme = "README.md"
+authors = [
+    { name = "Atilla Guzel", email = "33524244+atillaguzel@users.noreply.github.com" }
+]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+# Only what the shell needs: the model API client, and confusable to find the
+# hidden characters in untrusted text. Agents, GitHub and git are reached
+# through subprocesses (the Agent SDK, gh) that the workflow pins.
+dependencies = [
+    "anthropic",
+    "confusable",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Software Development",
+    "Typing :: Typed",
+]
+
+[project.scripts]
+guildkit = "guildkit.cli:main"
+
+[project.urls]
+Source = "https://github.com/blip-box/guild"
+
+[build-system]
+requires = ["uv_build>=0.13.4"]
+build-backend = "uv_build"
+
+[dependency-groups]
+test = [
+    "hypothesis>=6.168.5",
+    "pytest>=9.1.1",
+]
+lint = [
+    { include-group = "test" },
+    "mypy>=2.4.0",
+    "pre-commit>=4.6.2",
+    # pre-commit seeds pip from virtualenv into hook environments. Earlier
+    # releases seed pip 26.2.1, whose certifi trusts the compromised
+    # eMudhra/emSign root (October 2026); 21.14.13 seeds pip 26.2.2.
+    "virtualenv>=21.14.13",
+]
+
+[tool.uv]
+default-groups = ["test", "lint"]
+# uv 0.13.4 removed the compromised eMudhra/emSign root from its bundled
+# certificates (GHSA-hq85-5cpj-mr62). setup-uv in CI reads this floor too.
+required-version = ">=0.13.4"
+
+[tool.uv.sources]
+# Not on PyPI yet. Pinned by commit; bump deliberately.
+confusable = { git = "https://github.com/blip-box/confusable", rev = "3db2d8f189a9659f34cee655e77ce9c7aa80669a" }
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+testpaths = ["tests"]
+pythonpath = ["."]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "D",   # pydocstyle
+    "I",   # isort
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "B",   # flake8-bugbear
+    "PT",  # flake8-pytest-style
+    "RUF", # ruff-specific rules
+    "PLE25", # bidi controls and invisible characters in source (Trojan Source)
+]
+ignore = [
+    "D203", # one-blank-line-before-class (conflicts with D211)
+    "D213", # multi-line-summary-second-line (conflicts with D212)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[tool.ruff.format]
+docstring-code-format = true

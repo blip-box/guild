@@ -1,0 +1,34 @@
+# Pull requests are squash-merged, so the PR title becomes the commit on main;
+# lint it as a Conventional Commit. Individual commits are linted locally by
+# the commit-msg hook in .pre-commit-config.yaml. (A CI job also linted them
+# with wagoid/commitlint-github-action, until October 2026: that action runs on
+# Node 20.16.0, which is end-of-life and has no fix for the October Node.js
+# security release.)
+name: Commit lint
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  title:
+    name: pr title
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read # read the pull request title
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Matches commitlint's subject-case rule: no capitalised subjects.
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: >-
+            The subject "{subject}" starts with a capital letter. Start it in
+            lower case, for example "feat: add the tier rules".
