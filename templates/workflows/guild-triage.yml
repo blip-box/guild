@@ -1,0 +1,210 @@
+# Guild triage for an adopting repository. Copy to .github/workflows/.
+#
+# One issue or comment in; labels and a templated comment out. Three jobs,
+# each with the least it needs:
+#   intake  no secrets. Escapes the event text and runs the oracle check.
+#   triage  the model credential only. One tool-less call, structured output.
+#   post    the Triage App's token only. Validates the record, posts.
+# Nothing a model wrote reaches the issue: comments come from templates.
+#
+# Needs: the variable GUILDKIT_REF (a commit of blip-box/guild), the variable
+# GUILD_TRIAGE_APP_ID and the secret GUILD_TRIAGE_APP_KEY (a GitHub App with
+# issues: write, installed on this repository), and for the model credential
+# either workload identity federation (variables ANTHROPIC_FEDERATION_RULE_ID,
+# ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID and, for a rule over
+# several workspaces, ANTHROPIC_WORKSPACE_ID) or, until that exists, the
+# secret ANTHROPIC_API_KEY from a workspace-scoped service account key.
+# The repository variable GUILD_PAUSED set to "true" stops every run.
+#
+# Not yet: per-author and daily brakes (they need the ledger branch), the
+# ledger append (the entry is an artifact for now), egress filtering of the
+# triage job (no first-party mechanism; see docs/plan.md section 11).
+name: Guild triage
+
+on:
+  issues:
+    types: [opened, edited]
+  # Deliberate: the comment's text never reaches a shell or a token. The
+  # intake job holds no secret, the text goes through env and files only,
+  # and the model that reads it has no tools.
+  issue_comment: # zizmor: ignore[dangerous-triggers]
+    types: [created]
+
+permissions: {}
+
+# One run per issue at a time; later events wait rather than cancel.
+concurrency:
+  group: guild-triage-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  intake:
+    name: intake
+    # Not paused, not a pull request's comment, not a bot's.
+    if: >-
+      vars.GUILD_PAUSED != 'true'
+      && github.event.issue.pull_request == null
+      && (github.event_name == 'issues' || github.event.comment.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read this repository's guild.toml and oracle check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The base branch, never the issue's text, decides what runs.
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Install the pinned shell
+        run: uv sync --locked --no-default-groups --project .guild
+      - name: Write the event
+        # Through env, never interpolated into the script: the title and body
+        # are an outsider's text.
+        env:
+          EVENT: ${{ toJSON(github.event) }}
+        run: printf '%s' "$EVENT" > event.json
+      - name: Snapshot
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: uv run --project .guild guildkit snapshot --repo "$GH_REPO" --event event.json --out snapshot.json
+      - name: Oracle check
+        # The adopter's script, from the base branch: it reads the snapshot and
+        # writes one of confirms, disagrees, not_applicable, not_run, error.
+        # The adopter's own locked environment, without its dependency groups:
+        # a pinned install of the checkout, nothing from an index.
+        run: |
+          if [ -f tools/guild_oracle_check.py ]; then
+            uv sync --locked --no-default-groups
+            uv run --no-sync python -I tools/guild_oracle_check.py --snapshot snapshot.json --out oracle.txt || echo error > oracle.txt
+          else
+            echo not_run > oracle.txt
+          fi
+          echo "oracle: $(cat oracle.txt)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: intake
+          path: |
+            snapshot.json
+            oracle.txt
+          retention-days: 7
+
+  triage:
+    name: triage
+    needs: intake
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the pinned shell
+      id-token: write # workload identity federation for the model credential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: guild.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: intake
+      - name: Identity token
+        # A GitHub OIDC token for Anthropic's audience, read by the client from
+        # a file. Skipped when the federation rule is not configured yet.
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Triage
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          # Only until federation is set up. A key in the environment shadows
+          # federation, so the two are never both set.
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          uv run --project .guild guildkit triage \
+            --config guild.toml \
+            --snapshot snapshot.json \
+            --role .guild/roles/triage.md \
+            --oracle "$(cat oracle.txt)" \
+            --out record.json \
+            --ledger-entry entry.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: triage
+          path: |
+            record.json
+            entry.json
+          retention-days: 90
+
+  post:
+    name: post
+    needs: triage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the pinned shell for the templates
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: triage
+      - name: Render
+        env:
+          DECISION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHARTER_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CHARTER.md
+        run: |
+          uv run --project .guild guildkit render \
+            --record record.json \
+            --templates .guild/templates/comments \
+            --decision-url "$DECISION_URL" \
+            --charter-url "$CHARTER_URL" \
+            --out-comment comment.md \
+            --out-labels labels.json
+          {
+            echo "## Guild triage"
+            echo
+            echo '```json'
+            cat record.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.GUILD_TRIAGE_APP_ID }}
+          private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
+          permission-issues: write
+      - name: Post
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          jq -r '.[]' labels.json | while IFS= read -r label; do
+            gh label create "$label" --force --color 5319e7 --description "Set by Guild triage"
+          done
+          jq -r '.[]' labels.json | xargs -I{} gh issue edit "$NUMBER" --add-label "{}"
+          gh issue comment "$NUMBER" --body-file comment.md

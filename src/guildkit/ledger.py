@@ -23,6 +23,7 @@ OUTCOMES = (
     "patched",
     "reviewed",
     "merged",
+    "escalated",
     "failed",
     "paused",
     "skipped",

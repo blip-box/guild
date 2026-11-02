@@ -1,0 +1,13 @@
+name: Question
+description: Something unclear about what the library does or how to use it.
+labels: []
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: >-
+        If the library gives a result you believe is wrong, open a bug report
+        instead; it is checked automatically.
+    validations:
+      required: true

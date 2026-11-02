@@ -78,11 +78,18 @@ def test_bug_policy() -> None:
     assert confirmed["labels"] == ["guild:bug", "severity:high"]
     assert confirmed["outcome"] == "posted"
 
-    unconfirmed = triage.apply_policy(output(), "not_run")
-    assert unconfirmed["actionable"] is False
-    assert unconfirmed["missing"] == ["reproducer"]
-    assert unconfirmed["labels"] == ["guild:bug", "needs info"]
-    assert unconfirmed["outcome"] == "needs_info"
+    unrun = triage.apply_policy(output(), "not_run")
+    assert unrun["actionable"] is False
+    assert unrun["template"] == "needs_steward"
+    assert unrun["labels"] == ["guild:bug", "needs steward"]
+    assert unrun["outcome"] == "escalated"
+    assert triage.apply_policy(output(), "error")["template"] == "needs_steward"
+
+    no_reproducer = triage.apply_policy(output(), "not_applicable")
+    assert no_reproducer["actionable"] is False
+    assert no_reproducer["missing"] == ["reproducer"]
+    assert no_reproducer["labels"] == ["guild:bug", "needs info"]
+    assert no_reproducer["outcome"] == "needs_info"
 
     uncited = triage.apply_policy(output(clause=None), "confirms")
     assert uncited["actionable"] is False
@@ -137,7 +144,9 @@ def test_other_kinds_are_never_actionable(
     assert record["actionable"] is False
     assert record["template"] == template
     assert record["labels"] == labels
-    assert record["outcome"] == "declined"
+    assert record["outcome"] == (
+        "escalated" if "needs steward" in labels else "declined"
+    )
 
 
 def test_policy_rejects_an_unknown_oracle_value() -> None:
@@ -177,7 +186,7 @@ def test_cost_from_the_price_table() -> None:
 
 
 def test_render_comment_fills_only_known_placeholders(root: Path) -> None:
-    record = triage.apply_policy(output(), "not_run")
+    record = triage.apply_policy(output(), "not_applicable")
     comment = triage.render_comment(
         record,
         root / "templates" / "comments",
@@ -191,7 +200,7 @@ def test_render_comment_fills_only_known_placeholders(root: Path) -> None:
 
 def test_render_comment_fails_on_an_unknown_placeholder(tmp_path: Path) -> None:
     (tmp_path / "needs_info.md").write_text("Hello {reporter_name}", encoding="ascii")
-    record = triage.apply_policy(output(), "not_run")
+    record = triage.apply_policy(output(), "not_applicable")
     with pytest.raises(triage.TriageError, match="reporter_name"):
         triage.render_comment(
             record, tmp_path, {"decision_url": "u", "charter_url": "c"}
@@ -203,6 +212,7 @@ def test_every_template_renders_for_its_record(root: Path) -> None:
     cases = [
         (output(), "confirms"),
         (output(), "not_run"),
+        (output(), "not_applicable"),
         (output(), "disagrees"),
         (output(kind="feature", clause="C-SCOPE-5"), "not_applicable"),
         (output(kind="question", clause=None), "not_applicable"),

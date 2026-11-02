@@ -1,0 +1,73 @@
+name: Bug report
+description: The library gives a wrong or crashing result.
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Guild, the stewards' automation, triages this report. It accepts a bug
+        when an independent implementation of the specification confirms the
+        expected result, so the fields below are what it can check. Write
+        characters as code points (U+0430), not as the characters themselves:
+        rendering hides the very problems this library detects.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences in your own words.
+    validations:
+      required: true
+  - type: input
+    id: code_points
+    attributes:
+      label: Code points
+      description: The input, as space-separated code points.
+      placeholder: U+0070 U+0430 U+0079 U+0070 U+0061 U+006C
+    validations:
+      required: true
+  - type: input
+    id: function
+    attributes:
+      label: Function called
+      description: The function and its arguments other than the text.
+      placeholder: skeleton(text) or match(text, "paypal")
+    validations:
+      required: true
+  - type: input
+    id: expected
+    attributes:
+      label: Expected result
+      description: As Python would print it, with code points for non-ASCII.
+    validations:
+      required: true
+  - type: input
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Library version
+      placeholder: 0.1.0.dev0
+    validations:
+      required: true
+  - type: input
+    id: citation
+    attributes:
+      label: Specification clause
+      description: The clause that gives the expected result, or the implementation that does.
+      placeholder: UTS #39 section 4, or ICU SpoofChecker
+    validations:
+      required: true
+  - type: dropdown
+    id: ai_use
+    attributes:
+      label: Was an AI tool used to find or write this report?
+      options:
+        - "No"
+        - "Yes, and I checked the result myself"
+        - "Yes, unchecked"
+    validations:
+      required: true
