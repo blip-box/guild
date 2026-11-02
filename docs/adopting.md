@@ -9,10 +9,13 @@ adopter pins one commit of it.
 - `CHARTER.md`: mission, scope, non-goals and principles as numbered clauses
   with stable IDs. Triage cites them; changing the file is tier 2.
 - `guild.toml`: copied from `templates/guild.toml` and edited: the stewards,
-  the tier rules, the pinned models and their prices. Tier 2, and on the
-  reject list.
-- `.github/workflows/guild-triage.yml`: copied from `templates/workflows/`.
-  Workflows are on the reject list: agents draft them, a steward commits them.
+  the tier rules, the agents' models, limits and test command (`[planner]`,
+  `[builder]`, `[reviewer]`), and the prices. Tier 2, and on the reject list.
+- `.github/workflows/guild-triage.yml` and `guild-build.yml`: copied from
+  `templates/workflows/`. Workflows are on the reject list: agents draft them,
+  a steward commits them. The build workflow runs on a steward's `/guild plan`
+  or `/guild build` under an issue, checked against `guild.toml` and the
+  steward's live permission; it installs the shell with its `agents` extra.
 - `.github/ISSUE_TEMPLATE/`: copied from `templates/ISSUE_TEMPLATE/`. The bug
   form's fields are what the oracle check reads.
 - `tools/guild_oracle_check.py`: the adopter's oracle check (below). Optional:
@@ -47,7 +50,7 @@ from a fixed list, expected values) that the script turns into a call.
 
 ## Outside the repository
 
-Stewards create these; agents cannot. Set the kill switch (item 4) before the
+Stewards create these; agents cannot. Set the kill switch (item 5) before the
 workflow lands and clear it when the rest exists: a run on an issue opened
 before then fails at intake, which is noise, not harm.
 
@@ -60,7 +63,16 @@ before then fails at intake, which is noise, not harm.
    adopting repository only. Its ID goes in the variable
    `GUILD_TRIAGE_APP_ID`, its private key in the secret `GUILD_TRIAGE_APP_KEY`.
    Agent comments are posted as the App, so they are visibly Guild's.
-2. **The model credential.** A Console workspace for Guild with a monthly
+2. **The Builder App and the Gate App.** Two more GitHub Apps, installed on
+   the adopting repository only: the Builder App with contents: write and
+   pull requests: write (variable `GUILD_BUILDER_APP_ID`, secret
+   `GUILD_BUILDER_APP_KEY`), which commits the patch through
+   `createCommitOnBranch`, so the commit is signed, and opens the draft pull
+   request; the Gate App with checks: write (variable `GUILD_GATE_APP_ID`,
+   secret `GUILD_GATE_APP_KEY`), which posts the Reviewer's verdict as the
+   check run `guild/review`. Whether an App may open pull requests under the
+   collaborators-only setting is undocumented; the first shadow build shows it.
+3. **The model credential.** A Console workspace for Guild with a monthly
    spend limit (the only hard cap). Then workload identity federation: on the
    Console's Workload identity page, connect GitHub Actions, and pin the rule
    to this repository and `refs/heads/main`. The rule, organisation and
@@ -69,17 +81,19 @@ before then fails at intake, which is noise, not harm.
    (`ANTHROPIC_WORKSPACE_ID` only for a rule over several workspaces). Until
    federation exists, a workspace-scoped service account key in the secret
    `ANTHROPIC_API_KEY`; the workflow never sets both.
-3. **The pin.** The variable `GUILDKIT_REF`: the commit of `blip-box/guild`
+4. **The pin.** The variable `GUILDKIT_REF`: the commit of `blip-box/guild`
    the workflows check out. Bumping it is how the shell changes for this
    repository, after the drills pass.
-4. **The kill switch.** The variable `GUILD_PAUSED`; set it to `true` and every
+5. **The kill switch.** The variable `GUILD_PAUSED`; set it to `true` and every
    workflow skips its first job. Rehearse it.
-5. **Labels.** The workflow creates the labels it uses (`guild:*`, `needs
+6. **Labels.** The workflow creates the labels it uses (`guild:*`, `needs
    info`, `needs steward`, `spec disagrees`, `severity:*`) on first use.
 
 ## Shadow mode
 
 While Guild is in shadow, nothing merges without a steward, and nothing is
-automatic beyond triage comments. Every decision is graded afterwards and
+automatic beyond triage comments: a steward starts every plan and every build
+with a command, the pull requests are drafts, and the Reviewer's verdict is a
+check run, not a gate. Every decision is graded afterwards and
 seeds the drills. Shadow ends on a count of clean decisions and passing
 drills, not on a date (docs/plan.md, section 13).

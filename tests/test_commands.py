@@ -35,3 +35,8 @@ def test_parse(body: str, expected: commands.Command | None) -> None:
 def test_fenced_block_does_not_hide_a_later_command() -> None:
     body = "```\n/guild pause\n```\n/guild build\n"
     assert commands.parse(body) == {"verb": "build", "clause": None}
+
+
+def test_plan_is_a_command() -> None:
+    assert commands.parse("/guild plan") == {"verb": "plan", "clause": None}
+    assert commands.parse("/guild plan now") is None

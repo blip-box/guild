@@ -18,10 +18,11 @@ clauses, a `guild.toml` with its tiers, budgets and pinned models, and thin
 workflows that call the shell. The first adopter is
 [blip-box/confusable](https://github.com/blip-box/confusable).
 
-> **Status: shadow mode is being built.** The deterministic parts of the
-> shell exist and are tested: escaping untrusted text, issue snapshots, risk
-> tiers, the ledger, steward commands, and the triage call with its policy.
-> Nothing runs against a live repository yet.
+> **Status: shadow mode is being built.** The shell exists and is tested:
+> escaping untrusted text, issue snapshots, risk tiers, the ledger, steward
+> commands, the triage call with its policy, and the Planner, Builder and
+> Reviewer on the Claude Agent SDK with the plain check on their patches.
+> Nothing has run against a live repository yet.
 
 ## How a piece of work moves
 

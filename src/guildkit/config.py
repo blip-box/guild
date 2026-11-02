@@ -11,6 +11,8 @@ import tomllib
 from pathlib import Path
 from typing import Any, TypedDict
 
+from guildkit.builder import BuildRules
+from guildkit.roles import EFFORTS, ROLES, Role
 from guildkit.tiers import PathRules, ShapeRules, Tier
 from guildkit.triage import Prices
 
@@ -29,6 +31,15 @@ class TriageConfig(TypedDict):
     daily_runs: int
 
 
+class AgentConfig(TypedDict):
+    """One agent role's model and limits."""
+
+    model: str
+    max_turns: int
+    cap_usd: float
+    effort: str
+
+
 class Config(TypedDict):
     """Everything in guild.toml."""
 
@@ -41,6 +52,8 @@ class Config(TypedDict):
     tests: list[str]
     kinds: dict[str, str]
     triage: TriageConfig
+    agents: dict[Role, AgentConfig]
+    build: BuildRules
     prices: dict[str, Prices]
 
 
@@ -134,6 +147,31 @@ def parse(text: str) -> Config:
     if not _MODEL_ID.match(triage["model"]):
         raise ConfigError("triage.model: not a model ID")
 
+    agents: dict[Role, AgentConfig] = {}
+    for role in ROLES:
+        table = _table(data.get(role), role)
+        agents[role] = {
+            "model": _get(table, "model", str, role),
+            "max_turns": _get(table, "max_turns", int, role),
+            "cap_usd": _get(table, "cap_usd", float, role),
+            "effort": _get(table, "effort", str, role),
+        }
+        if not _MODEL_ID.match(agents[role]["model"]):
+            raise ConfigError(f"{role}.model: not a model ID")
+        if agents[role]["effort"] not in EFFORTS:
+            raise ConfigError(f"{role}.effort: expected one of {list(EFFORTS)}")
+        if agents[role]["max_turns"] < 1:
+            raise ConfigError(f"{role}.max_turns: expected at least 1")
+    builder_table = _table(data.get("builder"), "builder")
+    build: BuildRules = {
+        "test_command": _get(builder_table, "test_command", str, "builder"),
+        "max_test_rounds": _get(builder_table, "max_test_rounds", int, "builder"),
+        "generated": _strings(builder_table, "generated", "builder"),
+        "generators": _strings(builder_table, "generators", "builder"),
+    }
+    if not build["test_command"].strip():
+        raise ConfigError("builder.test_command: empty")
+
     models = _table(data.get("models"), "models")
     prices: dict[str, Prices] = {}
     for model_id, table in models.items():
@@ -153,6 +191,9 @@ def parse(text: str) -> Config:
         }
     if triage["model"] not in prices:
         raise ConfigError(f"models: no prices for triage.model {triage['model']}")
+    for role, agent in agents.items():
+        if agent["model"] not in prices:
+            raise ConfigError(f"models: no prices for {role}.model {agent['model']}")
 
     return {
         "repo": repo,
@@ -164,6 +205,8 @@ def parse(text: str) -> Config:
         "tests": tests,
         "kinds": kinds,
         "triage": triage,
+        "agents": agents,
+        "build": build,
         "prices": prices,
     }
 

@@ -18,27 +18,34 @@ Phase 2 (shadow mode) is being built. Done and tested: `text` (untrusted text to
 escaped plain text), `snapshot` (an issue or comment as a record), `tiers` (risk
 tiers from paths, diff shape and declared kinds), `ledger` (the append-only record
 format), `commands` (steward commands), `triage` (the schema, the policy, the
-templates and the one model call) and `config` (`guild.toml`). The `guildkit`
-command line chains them. The triage workflow template, the issue forms and the
-adopting guide with the oracle-check contract exist (`docs/adopting.md`). Not
-built: the Planner, Builder and Reviewer roles on the Agent SDK, the drill runner,
-the ledger branch tooling, the brakes that need it, and the weekly reports.
+templates and the one model call), `config` (`guild.toml`), `agents` (the Agent
+SDK driver with its hooks), `brief` (what the Builder reads), `builder` (the plain
+check on a patch), `planner` and `reviewer` (their schemas, validation and
+prompts). The `guildkit` command line chains them. The triage and build workflow
+templates, the issue forms and the adopting guide exist (`docs/adopting.md`).
+Nothing has run against a live repository yet. Not built: the drill runner, the
+ledger branch tooling, the brakes that need it, the weekly reports, the second
+Builder attempt on an escalated model, and egress filtering of the agent jobs.
 
 ## Decisions
 
 | Topic | Decision |
 |---|---|
 | Python | `>=3.13`, for `PurePosixPath.full_match`. The shell runs on CI runners, not on users' machines, so old interpreters do not matter. |
-| Dependencies | `anthropic` for the model API and `confusable`, from git by commit, to find hidden characters. Agents run through the Claude Agent SDK, added when the Builder is built. GitHub and git are driven by `gh` and `git` in the workflows, not from Python. |
+| Dependencies | `anthropic` for the model API and `confusable`, from git by commit, to find hidden characters. `claude-agent-sdk` in the `agents` extra only, pinned exactly, because its wheel carries the Claude Code CLI and the triage jobs do not need it; `roles.py` holds what `config` and `cli` need without it. GitHub and git are driven by `gh` and `git` in the workflows, not from Python; the one subprocess the shell runs is the adopter's test command, from the Builder's Stop hook. |
 | Installation | From git by commit SHA, never from PyPI. Adopters pin the SHA in their workflows. |
 | Configuration | `guild.toml` in the adopting repository, parsed by `config.py` with plain validation. The plan called it `GUILD.md`; a TOML file is machine-readable and checkable, and the prose lives in the adopter's `CHARTER.md` and `AGENTS.md`. Changing it is tier 2, and it is on the reject list. |
 | Untrusted text | Every string an outsider wrote passes through `text.prepare`: Markdown to plain text, HTML comments and tags dropped, entities decoded, then every character outside printable ASCII, newline and tab written as `U+XXXX`. JSON does not decode that notation, so it survives every hop. Hidden characters are listed with `confusable.find_invisible`. Lengths are capped. |
 | Triage call | One `messages.create` on the pinned model with a system prompt, no tools, low effort and structured output in the record's schema. The reply is validated again in `triage.validate_output`, and `triage.apply_policy` decides what is actionable; the model only classifies. Comments come from `templates/comments/*.md` with enumerated placeholders. |
 | Model IDs | Pinned in full in `guild.toml`, with a price table per ID for the ledger. The Anthropic IDs have no date suffix; partner platforms get their own entries. |
-| Agent SDK | The Python SDK's `setting_sources` defaults to loading user, project and local settings, CLAUDE.md, agents, skills and `.mcp.json` from disk. The shell must pass `setting_sources=[]` and hand over the charter, handbook and role files from the base branch itself. The SDK bundles the Claude Code CLI; pinning the SDK version pins the CLI (recorded in its `_cli_version.py`). `max_budget_usd` is a client-side estimate, not a cap. |
+| Agent SDK | `claude-agent-sdk` 0.2.176, which bundles Claude Code 2.1.316 (`_cli_version.py`); `tests/test_package.py` checks the pin and this sentence agree. `agents.options` gives the SDK nothing from disk: `setting_sources=[]` (the default loads user, project and local settings, CLAUDE.md, agents, skills and `.mcp.json`), `skills=[]`, `strict_mcp_config=True` with no servers, a fresh `CLAUDE_CONFIG_DIR` per run, telemetry and the updater off, and `verbatim_prompts=True` so nothing in the brief expands a path or runs a command. The role prompt, handbook and charter are read from the base branch and passed as the system prompt. `tools` is a list per role; `disallowed_tools` names the web, subagents and skills as well. Every call goes through `agents.Gate.pre_tool_use`, a PreToolUse hook, and `Gate.can_use_tool` denies anything that reaches the permission prompt. The Builder's Stop hook (`agents.TestGate`) runs the test command and blocks the stop while it fails, `max_test_rounds` times. `max_budget_usd` is the SDK's estimate and a brake; the ledger prices the tokens from `guild.toml`. The run record (`agents.Run`) holds counts and enumerations; the transcript is a separate artifact. |
+| Agent roles | The Planner reads the feature form's fields (`planner.request`), the handbook, the charter and the repository, read-only, and returns structured output that `planner.validate_output` checks: a plan with checkable acceptance criteria, a request for clarification, or out of scope. The Builder reads a brief (`brief.from_triage`): the triage record, the bug form's structured fields cut to `FIELD_LIMIT`, or the approved plan; never the issue body, a comment or the web. The Reviewer runs on a fresh runner with the patch applied; `reviewer.prompt` takes five texts and nothing else, and a test plants a canary everywhere else to prove it. Its findings are validated again, and the verdict is computed in code: a verified finding is an objection, an unverified one a note. In shadow mode the Planner and the Builder start on a steward's `/guild plan` or `/guild build`, checked against `guild.toml` and live permissions, not on triage's acceptance. |
+| Patch check | `builder.check_patch` reads the diff the workflow took against the base commit and refuses a patch that touches the reject list, removes a test function, adds a skip or an xfail, or changes a generated file without its generator (`[builder] generated` and `generators`); the rest is tiered by `tiers`. The Builder's own account of its work is not consulted. |
+| Pull requests | The `open` job applies the patch and commits it through GitHub's `createCommitOnBranch` with the Builder App's token, so GitHub signs the commit as the App; `guildkit commit-input` builds the mutation's input. Title, body and commit message come from `templates/pr/` with enumerated placeholders; the message carries an `Assisted-by` trailer naming the model. The pull request is a draft, labelled `guild:<tier>`. The Gate App posts the Reviewer's verdict as the check run `guild/review`. Model text reaches stewards only in step summaries, check-run text and artifacts, escaped to ASCII and cut; comments, labels, titles and commit messages stay templated. |
+| Plans | A plan is a run artifact named `plan-<issue number>`, kept 90 days; the build job fetches the latest one for a feature through the Actions API. The issue gets a templated comment pointing at the run. |
 | Credentials | Workload Identity Federation from GitHub Actions, through the SDK's own resolution: `id-token: write`, an identity token file and the federation variables, with no `ANTHROPIC_API_KEY` in the job. The federation rule is pinned to the repository and to `refs/heads/main`. The only hard cost cap is the workspace spend limit in the Console. |
 | Oracle check | The adopter's script, run by the intake job from the base branch with no secrets, writes one of `confirms`, `disagrees`, `not_applicable`, `not_run`, `error` (`docs/adopting.md`). Policy: a bug is accepted only on `confirms`; `disagrees` goes to a steward with the citation; `not_run` and `error` escalate to a steward, because the harness failed, not the reporter; `not_applicable` asks the reporter for a reproducer. |
-| Triggers | The triage workflow runs on `issue_comment`, which zizmor flags, with a justification comment: the text never reaches a shell or a token, the intake job holds no secret, and the model has no tools. Keep that true. |
+| Triggers | The triage and build workflows run on `issue_comment`, which zizmor flags, with a justification comment: the text never reaches a shell or a token, the intake job holds no secret, the triage model has no tools, and the agents never see the comment. Keep that true. |
 | Ledger | One JSON line per run with sorted keys. Every field is a number, an enumerated value, an identifier or a hash; `ledger.validate` rejects anything else, so no model text can reach it. |
 | ASCII | Python source, TOML, YAML, the role prompts and the comment templates are ASCII, so no look-alike or hidden character can change what a model or a person reads. Other tracked files may hold visible non-ASCII characters but nothing invisible or bidirectional. `tests/test_hygiene.py` checks both with `confusable`. |
 
@@ -64,12 +71,21 @@ CI runs exactly these, so a clean local run means a clean CI run.
 - `src/guildkit/ledger.py`: the ledger line format, validation, append and read.
 - `src/guildkit/commands.py`: steward commands in comments.
 - `src/guildkit/config.py`: `guild.toml`.
+- `src/guildkit/roles.py`: the role names and effort levels, without the SDK.
+- `src/guildkit/agents.py`: the Agent SDK driver: options, the gate and the test
+  hooks, one run, the run record.
+- `src/guildkit/brief.py`: the brief the Builder and the Reviewer read.
+- `src/guildkit/builder.py`: the plain check on the Builder's diff.
+- `src/guildkit/planner.py`: the Planner's request, schema and validation.
+- `src/guildkit/reviewer.py`: the Reviewer's prompt, schema, validation and verdict.
 - `src/guildkit/cli.py`: the `guildkit` command line, one subcommand per step.
 - `roles/`: the role prompts, one file per role. ASCII.
 - `templates/guild.toml`: the example configuration, the one the tests load.
 - `templates/comments/`: the comment templates triage posts from.
-- `templates/workflows/guild-triage.yml`: the triage workflow an adopter copies.
-  It is linted by hand with zizmor and actionlint, which only scan `.github/`.
+- `templates/workflows/guild-triage.yml` and `guild-build.yml`: the workflows an
+  adopter copies. They are linted by hand with zizmor and actionlint, which only
+  scan `.github/`.
+- `templates/pr/`: the pull request body and the commit message.
 - `templates/ISSUE_TEMPLATE/`: the issue forms; the bug form's fields are what the
   oracle check reads.
 - `docs/plan.md`: the design and its decision log. `docs/adopting.md`: what an
@@ -89,7 +105,8 @@ CI runs exactly these, so a clean local run means a clean CI run.
 - Python source is ASCII. Write every other character as an escape, and check the
   bytes after writing one from a tool parameter.
 - Tests need no network and no credentials. The model call is behind the `Caller`
-  protocol; tests use a fake, and the command line takes `--reply` for the same.
+  protocol and the agents behind `agents.Runner`; tests use fakes, the command
+  line takes `--reply` for triage and `cli.RUNNER` for the agents.
 - Mirror `blip-box/confusable`'s tooling: ruff, mypy strict, zizmor, actionlint,
   pre-commit, Conventional Commits, squash merges. The maintainer merges; agents do
   not merge and do not work around tooling that blocks a merge.
@@ -108,12 +125,13 @@ CI runs exactly these, so a clean local run means a clean CI run.
 
 Each item is its own pull request, in order:
 
-1. The Builder and Reviewer on the Agent SDK, producing patches and findings that a
-   plain job applies; the Planner for features.
-2. The drill runner and the first drills from confusable's history.
-3. The ledger branch, the weekly report and the kill-switch rehearsal.
+1. The drill runner and the first drills from confusable's history.
+2. The ledger branch, the weekly report and the kill-switch rehearsal; the brakes
+   that need the ledger.
+3. The second Builder attempt on an escalated model.
 4. The Releaser.
 
 Done: the shell, the triage workflow template, the issue forms, the adopting
-guide, and the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the
-triage workflow and `tools/guild_oracle_check.py`; confusable PR #27).
+guide, the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the
+triage workflow and `tools/guild_oracle_check.py`; confusable PR #27), and the
+Planner, Builder and Reviewer on the Agent SDK with the build workflow template.

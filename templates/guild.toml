@@ -53,6 +53,37 @@ cap_usd = 0.10
 per_author_per_day = 3
 daily_runs = 40
 
+# The agents, through the Claude Agent SDK. Every role starts on the strongest
+# model and moves down only when the drills show no loss. cap_usd is a brake
+# on one run (the SDK's own estimate); the ledger prices the tokens itself.
+[planner]
+model = "claude-opus-5-5"
+max_turns = 40
+cap_usd = 1.00
+effort = "high"
+
+[builder]
+model = "claude-opus-5-5"
+max_turns = 80
+cap_usd = 4.00
+effort = "high"
+# Run in the checkout before the Builder may finish, and again by the plain
+# check. The workflow installs the environment first; --no-sync keeps the
+# agent from installing anything.
+test_command = "uv run --no-sync pytest -q -x"
+# How many times the Builder may fail the tests and try again before the
+# run ends as failed.
+max_test_rounds = 3
+# Generated files may change only together with their generator.
+generated = ["src/confusable/_data/**", "tests/conformance/fixtures/**"]
+generators = ["tools/**"]
+
+[reviewer]
+model = "claude-opus-5-5"
+max_turns = 40
+cap_usd = 2.00
+effort = "high"
+
 # US dollars per million tokens, Anthropic API list prices, for the ledger.
 # Partner platforms price differently: add their IDs with their prices.
 [models."claude-haiku-5-5"]

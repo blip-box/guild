@@ -190,10 +190,10 @@ harness versions, cost. A weekly sweep audits merged changes.
 - The shell drives agents through the Claude Agent SDK for Python: it passes
   `setting_sources=[]`, because the SDK otherwise loads settings, CLAUDE.md,
   agents and skills from disk (section 12, item 3), and hands it the charter,
-  settings and role definitions from the base branch explicitly; path rules
-  run as a Python permission callback inside the shell;
-  cost and usage arrive as typed results. The SDK and Claude Code versions are
-  pinned.
+  settings and role definitions from the base branch explicitly; path and
+  command rules run as a PreToolUse hook inside the shell, with a permission
+  callback that denies whatever reaches the prompt; cost and usage arrive as
+  typed results. The SDK and Claude Code versions are pinned.
 - No agent holds a write token. Agent steps produce a patch or a record. Plain
   jobs holding the App tokens apply it after checks.
 - The agent sandbox has no tokens. A networked setup step installs
@@ -342,8 +342,11 @@ found and what it changed.
    2026, but whether Claude partner SKUs fall under the capped service is
    undocumented. The Console workspace limit stays the only hard cap.
 7. **The Python Agent SDK bundles the Claude Code CLI** and records the version
-   in `_cli_version.py` (0.2.175 bundles 2.1.314, both released 2026-10-30).
+   in `_cli_version.py` (0.2.175 bundles 2.1.314, both released 2026-10-30;
+   the shell pins 0.2.176 with 2.1.316, installed and read on 2026-11-02).
    Pinning the SDK pins the CLI. `max_budget_usd` is a client-side estimate.
+   The bundled CLI reads the federation variables and the identity token
+   file, so the agents use the same credential path as the plain client.
 8. **Rulesets on a Free-plan public repository.** Branch rulesets, code owners
    and required code-owner review are available. Push rulesets that restrict
    file paths are for private and internal repositories only. Tiers are
@@ -424,3 +427,8 @@ found and what it changed.
 | 51 | The shell passes `setting_sources=[]` to the Agent SDK | Section 12, item 3 |
 | 52 | Tiers mirrored with CODEOWNERS and the required-reviewers rule, not push rulesets | Section 12, item 8 |
 | 53 | The triage call uses structured output in the record's schema, validated again in code | Phase 2 |
+| 54 | In shadow mode a steward starts every plan and build with `/guild plan` or `/guild build`; triage's acceptance starts nothing | Phase 2 |
+| 55 | Plans are run artifacts named by issue, found by the build job; the issue gets a templated pointer to the run | Phase 2 |
+| 56 | Agent commits are made with `createCommitOnBranch` by the Builder App, so GitHub signs them; an `Assisted-by` trailer names the model | Phase 2 |
+| 57 | Model text reaches stewards only in step summaries, check-run text and artifacts, escaped to ASCII and cut; comments, labels, titles and commit messages stay templated | Phase 2 |
+| 58 | The Reviewer's verdict is computed in code: a verified finding objects, an unverified one is a note; the verdict is a check run, not a gate, in shadow mode | Phase 2 |

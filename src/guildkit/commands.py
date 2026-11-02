@@ -1,4 +1,4 @@
-"""Steward commands in comments: `/guild build`, `/guild reject C-OUT-1`, ...
+"""Steward commands in comments: `/guild plan`, `/guild build`, `/guild reject ...`.
 
 A plain parser. Whether the author may command is the caller's check, against
 live permissions, never against the comment.
@@ -11,13 +11,14 @@ from typing import Literal, TypedDict
 
 from guildkit.text import normalize_newlines
 
-Verb = Literal["build", "reject", "retry", "pause", "resume"]
+Verb = Literal["plan", "build", "reject", "retry", "pause", "resume"]
 
 CLAUSE = re.compile(r"^C-[A-Z]+-[1-9][0-9]*$")
 _FENCED = re.compile(
     r"^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[ \t]*$", re.DOTALL | re.MULTILINE
 )
 _BARE: dict[str, Verb] = {
+    "plan": "plan",
     "build": "build",
     "retry": "retry",
     "pause": "pause",

@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -60,3 +61,44 @@ def test_missing_table_is_named() -> None:
 def test_not_toml() -> None:
     with pytest.raises(config.ConfigError, match="not TOML"):
         config.parse("guild = [")
+
+
+def test_example_config_has_the_agents(example_config: Path) -> None:
+    cfg = config.load(example_config)
+    assert set(cfg["agents"]) == {"planner", "builder", "reviewer"}
+    assert cfg["agents"]["builder"]["cap_usd"] == 4.0
+    assert cfg["agents"]["builder"]["effort"] == "high"
+    assert cfg["build"]["test_command"].startswith("uv run --no-sync pytest")
+    assert cfg["build"]["max_test_rounds"] == 3
+    assert "tools/**" in cfg["build"]["generators"]
+    for agent in cfg["agents"].values():
+        assert agent["model"] in cfg["prices"]
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        (
+            'effort = "high"\n\n[builder]',
+            'effort = "extreme"\n\n[builder]',
+            "planner.effort",
+        ),
+        ("max_turns = 80", "max_turns = 0", "builder.max_turns"),
+        (
+            'test_command = "uv run --no-sync pytest -q -x"',
+            'test_command = " "',
+            "builder.test_command",
+        ),
+        (
+            '[reviewer]\nmodel = "claude-opus-5-5"',
+            '[reviewer]\nmodel = "claude-opus-9"',
+            "no prices for reviewer.model",
+        ),
+        ('generators = ["tools/**"]', "generators = [1]", "builder.generators"),
+    ],
+)
+def test_agent_sections_are_validated(
+    example_config: Path, old: str, new: str, message: str
+) -> None:
+    with pytest.raises(config.ConfigError, match=re.escape(message)):
+        config.parse(_with(example_config, old, new))

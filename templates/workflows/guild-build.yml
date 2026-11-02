@@ -1,0 +1,765 @@
+# Guild plan and build for an adopting repository. Copy to .github/workflows/.
+#
+# A steward writes `/guild plan` or `/guild build` under an issue. Plain jobs
+# check who wrote it and rebuild the triage record; agents then work in
+# checkouts that hold no token; plain jobs check what they made and open the
+# pull request. Shadow mode: the pull request is a draft and a steward merges.
+#
+#   command  no secrets. Parses the comment; checks the author is a steward
+#            in guild.toml and has write permission on the repository.
+#   intake   no secrets. Snapshot of the issue (not the comment), oracle check.
+#   triage   the model credential. The record, rebuilt; nothing is posted.
+#   plan     the model credential. The Planner, read-only, structured output.
+#   build    the model credential. The Builder, in a checkout of the base.
+#   check    no secrets. The diff, the plain check, the tier.
+#   review   the model credential. The Reviewer, fresh runner, patch applied.
+#   open     the Builder App and the Gate App. Signed commit, draft pull
+#            request, check run; the Triage App posts the templated comment.
+#
+# Needs, beyond guild-triage.yml: the variable GUILD_BUILDER_APP_ID and the
+# secret GUILD_BUILDER_APP_KEY (contents: write, pull requests: write), the
+# variable GUILD_GATE_APP_ID and the secret GUILD_GATE_APP_KEY (checks: write).
+#
+# Not yet: the second Builder attempt on an escalated model, egress
+# filtering of the agent jobs (no first-party mechanism), the ledger append.
+name: Guild build
+
+on:
+  # Deliberate: only a steward's command starts anything, checked against
+  # guild.toml and live permissions; the comment's text reaches no shell and
+  # no token, and the agents never see it.
+  issue_comment: # zizmor: ignore[dangerous-triggers]
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: guild-build-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  command:
+    name: command
+    if: >-
+      vars.GUILD_PAUSED != 'true'
+      && github.event.issue.pull_request == null
+      && github.event.comment.user.type != 'Bot'
+      && startsWith(github.event.comment.body, '/guild ')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read guild.toml and the pinned shell
+    outputs:
+      verb: ${{ steps.parse.outputs.verb }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: guild.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - name: Steward
+        # The login must be in guild.toml and must hold write permission now.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          LOGIN: ${{ github.event.comment.user.login }}
+        run: |
+          uv run --project .guild guildkit steward --config guild.toml --login "$LOGIN"
+          permission=$(gh api "repos/$GH_REPO/collaborators/$LOGIN/permission" --jq .permission)
+          case "$permission" in
+            admin|maintain|write) ;;
+            *) echo "::error::$LOGIN has $permission permission"; exit 1 ;;
+          esac
+      - name: Parse
+        id: parse
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          printf '%s' "$BODY" > body.md
+          verb=$(uv run --project .guild guildkit command --body body.md | jq -r '.verb // empty')
+          case "$verb" in
+            plan|build) echo "verb=$verb" >> "$GITHUB_OUTPUT" ;;
+            *) echo "no plan or build command"; echo "verb=" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  intake:
+    name: intake
+    needs: command
+    if: needs.command.outputs.verb != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # the oracle check runs from the base branch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - name: Write the issue
+        # The issue without the comment: the snapshot is of the report.
+        env:
+          EVENT: ${{ toJSON(github.event) }}
+        run: printf '%s' "$EVENT" | jq 'del(.comment)' > event.json
+      - name: Snapshot
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: uv run --project .guild guildkit snapshot --repo "$GH_REPO" --event event.json --out snapshot.json
+      - name: Oracle check
+        run: |
+          if [ -f tools/guild_oracle_check.py ]; then
+            uv sync --locked --no-default-groups
+            uv run --no-sync python -I tools/guild_oracle_check.py --snapshot snapshot.json --out oracle.txt || echo error > oracle.txt
+          else
+            echo not_run > oracle.txt
+          fi
+          echo "oracle: $(cat oracle.txt)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: intake
+          path: |
+            snapshot.json
+            oracle.txt
+          retention-days: 7
+
+  triage:
+    name: triage
+    needs: [command, intake]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the pinned shell
+      id-token: write # workload identity federation for the model credential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: guild.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: intake
+      - name: Identity token
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Triage
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          uv run --project .guild guildkit triage \
+            --config guild.toml \
+            --snapshot snapshot.json \
+            --role .guild/roles/triage.md \
+            --oracle "$(cat oracle.txt)" \
+            --out record.json \
+            --ledger-entry triage-entry.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: record
+          path: |
+            snapshot.json
+            record.json
+            triage-entry.json
+          retention-days: 90
+
+  plan:
+    name: plan
+    needs: [command, triage]
+    if: needs.command.outputs.verb == 'plan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # the repository the Planner reads, at the base branch
+      id-token: write # workload identity federation for the model credential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --extra agents --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: record
+      - name: Identity token
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Plan
+        id: plan
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          DECIDER: ${{ github.event.comment.user.login }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          mkdir -p "$RUNNER_TEMP/out"
+          uv run --project .guild guildkit plan \
+            --config guild.toml \
+            --snapshot snapshot.json \
+            --record record.json \
+            --root "$PWD" \
+            --role .guild/roles/planner.md \
+            --handbook AGENTS.md \
+            --charter CHARTER.md \
+            --out "$RUNNER_TEMP/out/plan.json" \
+            --post "$RUNNER_TEMP/out/post.json" \
+            --run "$RUNNER_TEMP/out/run.json" \
+            --ledger-entry "$RUNNER_TEMP/out/entry.json" \
+            --transcript "$RUNNER_TEMP/out/transcript.jsonl" \
+            --decider "$DECIDER" || true
+          {
+            echo "## Guild plan"
+            echo
+            uv run --project .guild guildkit summary --kind run --file "$RUNNER_TEMP/out/run.json"
+            echo
+            uv run --project .guild guildkit summary --kind plan --file "$RUNNER_TEMP/out/plan.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # Named by issue: the build job finds the latest plan this way.
+          name: plan-${{ github.event.issue.number }}
+          path: |
+            ${{ runner.temp }}/out/plan.json
+            ${{ runner.temp }}/out/post.json
+            ${{ runner.temp }}/out/run.json
+            ${{ runner.temp }}/out/entry.json
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plan-transcript
+          path: ${{ runner.temp }}/out/transcript.jsonl
+          retention-days: 90
+
+  plan-post:
+    name: post the plan
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the pinned shell for the templates
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plan-${{ github.event.issue.number }}
+      - name: Render
+        env:
+          DECISION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHARTER_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CHARTER.md
+        run: |
+          uv run --project .guild guildkit render \
+            --record post.json \
+            --templates .guild/templates/comments \
+            --decision-url "$DECISION_URL" \
+            --charter-url "$CHARTER_URL" \
+            --out-comment comment.md \
+            --out-labels labels.json
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.GUILD_TRIAGE_APP_ID }}
+          private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
+          permission-issues: write
+      - name: Post
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          jq -r '.[]' labels.json | while IFS= read -r label; do
+            gh label create "$label" --force --color 5319e7 --description "Set by Guild"
+          done
+          jq -r '.[]' labels.json | xargs -I{} gh issue edit "$NUMBER" --add-label "{}"
+          gh issue comment "$NUMBER" --body-file comment.md
+
+  build:
+    name: build
+    needs: [command, triage]
+    if: needs.command.outputs.verb == 'build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # the checkout the Builder edits, at the base branch
+      actions: read # find the plan artifact of an earlier run
+      id-token: write # workload identity federation for the model credential
+    outputs:
+      base: ${{ steps.base.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --extra agents --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: record
+          path: ${{ runner.temp }}/in
+      - name: Plan
+        # A feature needs the plan a steward read: the latest plan artifact
+        # for this issue, from an earlier run of this workflow.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if [ "$(jq -r .kind "$RUNNER_TEMP/in/record.json")" = feature ]; then
+            id=$(gh api "repos/$GH_REPO/actions/artifacts?name=plan-$NUMBER&per_page=100" \
+              --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .id // empty')
+            [ -n "$id" ] || { echo "::error::no plan for #$NUMBER; run /guild plan first"; exit 1; }
+            gh api "repos/$GH_REPO/actions/artifacts/$id/zip" > "$RUNNER_TEMP/plan.zip"
+            mkdir -p "$RUNNER_TEMP/plan" && unzip -q "$RUNNER_TEMP/plan.zip" -d "$RUNNER_TEMP/plan"
+            echo "PLAN_ARG=--plan $RUNNER_TEMP/plan/plan.json" >> "$GITHUB_ENV"
+          fi
+      - name: Brief
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          # shellcheck disable=SC2086
+          uv run --project .guild guildkit brief \
+            --snapshot "$RUNNER_TEMP/in/snapshot.json" \
+            --record "$RUNNER_TEMP/in/record.json" \
+            $PLAN_ARG \
+            --out "$RUNNER_TEMP/out/brief.json"
+      - name: Install the adopter's environment
+        # Before the agent runs, with the network: the agent's checkout then
+        # needs nothing from an index. --no-sync in the test command keeps it so.
+        run: uv sync --locked
+      - name: Identity token
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Build
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          uv run --project .guild guildkit build \
+            --config guild.toml \
+            --brief "$RUNNER_TEMP/out/brief.json" \
+            --root "$PWD" \
+            --role .guild/roles/builder.md \
+            --handbook AGENTS.md \
+            --charter CHARTER.md \
+            --run "$RUNNER_TEMP/out/run.json" \
+            --transcript "$RUNNER_TEMP/out/transcript.jsonl"
+      - name: Patch
+        # The working tree against the base commit, whatever the agent did.
+        # The shell's checkout and its environment are not part of it.
+        run: |
+          rm -rf .guild
+          git add -A
+          git diff --cached --binary "$(git rev-parse HEAD)" > "$RUNNER_TEMP/out/patch.diff"
+          git diff --cached --stat "$(git rev-parse HEAD)" | tail -3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build
+          path: |
+            ${{ runner.temp }}/out/brief.json
+            ${{ runner.temp }}/out/run.json
+            ${{ runner.temp }}/out/patch.diff
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-transcript
+          path: ${{ runner.temp }}/out/transcript.jsonl
+          retention-days: 90
+
+  check:
+    name: check
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the pinned shell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: guild.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build
+      - name: Check
+        env:
+          DECIDER: ${{ github.event.comment.user.login }}
+        run: |
+          status=0
+          uv run --project .guild guildkit patch-check \
+            --config guild.toml \
+            --brief brief.json \
+            --diff patch.diff \
+            --run run.json \
+            --out check.json \
+            --ledger-entry entry.json \
+            --decider "$DECIDER" || status=$?
+          {
+            echo "## Guild build"
+            echo
+            uv run --project .guild guildkit summary --kind run --file run.json
+            echo
+            uv run --project .guild guildkit summary --kind check --file check.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: check
+          path: |
+            check.json
+            entry.json
+          retention-days: 90
+
+  build-failed:
+    name: tell the issue the build failed
+    needs: [build, check]
+    if: failure() && needs.build.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the pinned shell for the templates
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - name: Render
+        env:
+          DECISION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHARTER_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CHARTER.md
+        run: |
+          jq -n '{kind: "other", severity: "none", clause: null, missing: [],
+            oracle: "not_applicable", actionable: false, template: "build_failed",
+            labels: ["needs steward"], outcome: "escalated"}' > post.json
+          uv run --project .guild guildkit render \
+            --record post.json \
+            --templates .guild/templates/comments \
+            --decision-url "$DECISION_URL" \
+            --charter-url "$CHARTER_URL" \
+            --out-comment comment.md \
+            --out-labels labels.json
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.GUILD_TRIAGE_APP_ID }}
+          private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
+          permission-issues: write
+      - name: Post
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh label create "needs steward" --force --color 5319e7 --description "Set by Guild"
+          gh issue edit "$NUMBER" --add-label "needs steward"
+          gh issue comment "$NUMBER" --body-file comment.md
+
+  review:
+    name: review
+    needs: [build, check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # the checkout the Reviewer reads, with the patch applied
+      id-token: write # workload identity federation for the model credential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.build.outputs.base }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --extra agents --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build
+          path: ${{ runner.temp }}/in
+      - name: Apply the patch
+        run: git apply --index "$RUNNER_TEMP/in/patch.diff"
+      - run: uv sync --locked
+      - name: Identity token
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Review
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          DECIDER: ${{ github.event.comment.user.login }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          mkdir -p "$RUNNER_TEMP/out"
+          uv run --project .guild guildkit review \
+            --config guild.toml \
+            --brief "$RUNNER_TEMP/in/brief.json" \
+            --diff "$RUNNER_TEMP/in/patch.diff" \
+            --root "$PWD" \
+            --role .guild/roles/reviewer.md \
+            --handbook AGENTS.md \
+            --charter CHARTER.md \
+            --out "$RUNNER_TEMP/out/review.json" \
+            --run "$RUNNER_TEMP/out/run.json" \
+            --ledger-entry "$RUNNER_TEMP/out/entry.json" \
+            --transcript "$RUNNER_TEMP/out/transcript.jsonl" \
+            --decider "$DECIDER" || true
+          {
+            echo "## Guild review"
+            echo
+            uv run --project .guild guildkit summary --kind run --file "$RUNNER_TEMP/out/run.json"
+            echo
+            uv run --project .guild guildkit summary --kind review --file "$RUNNER_TEMP/out/review.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: review
+          path: |
+            ${{ runner.temp }}/out/review.json
+            ${{ runner.temp }}/out/run.json
+            ${{ runner.temp }}/out/entry.json
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: review-transcript
+          path: ${{ runner.temp }}/out/transcript.jsonl
+          retention-days: 90
+
+  open:
+    name: open
+    needs: [build, check, review]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # the base checkout the patch is applied to
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.build.outputs.base }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build
+          path: ${{ runner.temp }}/build
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: check
+          path: ${{ runner.temp }}/check
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: review
+          path: ${{ runner.temp }}/review
+      - name: Text
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          uv run --project .guild guildkit pr-text \
+            --config guild.toml \
+            --brief "$RUNNER_TEMP/build/brief.json" \
+            --check "$RUNNER_TEMP/check/check.json" \
+            --review "$RUNNER_TEMP/review/review.json" \
+            --run-url "$RUN_URL" \
+            --templates .guild/templates/pr \
+            --out-title "$RUNNER_TEMP/title.txt" \
+            --out-body "$RUNNER_TEMP/body.md" \
+            --out-message "$RUNNER_TEMP/message.txt"
+      - name: Commit input
+        # The patch applied to the index, then listed for the mutation that
+        # the Builder App signs. The shell's checkout is not part of it.
+        env:
+          BASE: ${{ needs.build.outputs.base }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          git apply --index "$RUNNER_TEMP/build/patch.diff"
+          git diff --cached --name-status "$BASE" > "$RUNNER_TEMP/status.txt"
+          uv run --project .guild guildkit commit-input \
+            --config guild.toml \
+            --root "$PWD" \
+            --name-status "$RUNNER_TEMP/status.txt" \
+            --branch "guild/issue-$NUMBER" \
+            --head "$BASE" \
+            --message "$RUNNER_TEMP/message.txt" \
+            --out "$RUNNER_TEMP/commit.json"
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: builder
+        with:
+          app-id: ${{ vars.GUILD_BUILDER_APP_ID }}
+          private-key: ${{ secrets.GUILD_BUILDER_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Branch, commit, pull request
+        env:
+          GH_TOKEN: ${{ steps.builder.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ needs.build.outputs.base }}
+          NUMBER: ${{ github.event.issue.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          branch="guild/issue-$NUMBER"
+          if ! gh api "repos/$GH_REPO/git/ref/heads/$branch" >/dev/null 2>&1; then
+            gh api -X POST "repos/$GH_REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$BASE" >/dev/null
+          else
+            gh api -X PATCH "repos/$GH_REPO/git/refs/heads/$branch" -f sha="$BASE" -F force=true >/dev/null
+          fi
+          # One signed commit, by the App, from the file contents in the input.
+          gh api graphql \
+            -F input="@$RUNNER_TEMP/commit.json" \
+            -f query='mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }' \
+            --jq '.data.createCommitOnBranch.commit.oid' > "$RUNNER_TEMP/head.txt"
+          echo "HEAD_SHA=$(cat "$RUNNER_TEMP/head.txt")" >> "$GITHUB_ENV"
+          if gh pr view "$branch" --json number --jq .number >/dev/null 2>&1; then
+            gh pr edit "$branch" --title "$(cat "$RUNNER_TEMP/title.txt")" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --draft --base "$DEFAULT_BRANCH" --head "$branch" \
+              --title "$(cat "$RUNNER_TEMP/title.txt")" --body-file "$RUNNER_TEMP/body.md"
+          fi
+          tier=$(jq -r .tier "$RUNNER_TEMP/check/check.json" | tr 'A-Z' 'a-z')
+          gh label create "guild:$tier" --force --color 0e8a16 --description "Guild risk tier"
+          gh pr edit "$branch" --add-label "guild:$tier"
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: gate
+        with:
+          app-id: ${{ vars.GUILD_GATE_APP_ID }}
+          private-key: ${{ secrets.GUILD_GATE_APP_KEY }}
+          permission-checks: write
+      - name: Check run
+        # The Reviewer's verdict as a check on the commit: the enumerations in
+        # the conclusion, the escaped findings in the text.
+        env:
+          GH_TOKEN: ${{ steps.gate.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          verdict=$(jq -r .verdict "$RUNNER_TEMP/review/review.json")
+          case "$verdict" in
+            no_objection) conclusion=success ;;
+            objections) conclusion=action_required ;;
+            *) conclusion=neutral ;;
+          esac
+          uv run --project .guild guildkit summary --kind review --file "$RUNNER_TEMP/review/review.json" > "$RUNNER_TEMP/findings.md"
+          jq -n --arg sha "$HEAD_SHA" --arg conclusion "$conclusion" --arg url "$RUN_URL" \
+            --arg title "Guild review: $verdict" --rawfile text "$RUNNER_TEMP/findings.md" \
+            '{name: "guild/review", head_sha: $sha, status: "completed", conclusion: $conclusion,
+              details_url: $url, output: {title: $title, summary: $title, text: $text}}' \
+            > "$RUNNER_TEMP/check-run.json"
+          gh api -X POST "repos/$GH_REPO/check-runs" --input "$RUNNER_TEMP/check-run.json" --jq .id
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: triage
+        with:
+          app-id: ${{ vars.GUILD_TRIAGE_APP_ID }}
+          private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
+          permission-issues: write
+      - name: Tell the issue
+        env:
+          GH_TOKEN: ${{ steps.triage.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          DECISION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHARTER_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CHARTER.md
+        run: |
+          jq -n '{kind: "other", severity: "none", clause: null, missing: [],
+            oracle: "not_applicable", actionable: false, template: "build_opened",
+            labels: ["guild:built"], outcome: "posted"}' > post.json
+          uv run --project .guild guildkit render \
+            --record post.json \
+            --templates .guild/templates/comments \
+            --decision-url "$DECISION_URL" \
+            --charter-url "$CHARTER_URL" \
+            --out-comment comment.md \
+            --out-labels labels.json
+          gh label create "guild:built" --force --color 5319e7 --description "Set by Guild"
+          gh issue edit "$NUMBER" --add-label "guild:built"
+          gh issue comment "$NUMBER" --body-file comment.md
