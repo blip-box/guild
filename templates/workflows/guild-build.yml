@@ -695,9 +695,14 @@ jobs:
             gh api -X PATCH "repos/$GH_REPO/git/refs/heads/$branch" -f sha="$BASE" -F force=true >/dev/null
           fi
           # One signed commit, by the App, from the file contents in the input.
+          cat > "$RUNNER_TEMP/commit.graphql" <<'QUERY'
+          mutation($input: CreateCommitOnBranchInput!) {
+            createCommitOnBranch(input: $input) { commit { oid } }
+          }
+          QUERY
           gh api graphql \
             -F input="@$RUNNER_TEMP/commit.json" \
-            -f query='mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }' \
+            -F query="@$RUNNER_TEMP/commit.graphql" \
             --jq '.data.createCommitOnBranch.commit.oid' > "$RUNNER_TEMP/head.txt"
           echo "HEAD_SHA=$(cat "$RUNNER_TEMP/head.txt")" >> "$GITHUB_ENV"
           if gh pr view "$branch" --json number --jq .number >/dev/null 2>&1; then
@@ -706,7 +711,7 @@ jobs:
             gh pr create --draft --base "$DEFAULT_BRANCH" --head "$branch" \
               --title "$(cat "$RUNNER_TEMP/title.txt")" --body-file "$RUNNER_TEMP/body.md"
           fi
-          tier=$(jq -r .tier "$RUNNER_TEMP/check/check.json" | tr 'A-Z' 'a-z')
+          tier=$(jq -r .tier "$RUNNER_TEMP/check/check.json" | tr '[:upper:]' '[:lower:]')
           gh label create "guild:$tier" --force --color 0e8a16 --description "Guild risk tier"
           gh pr edit "$branch" --add-label "guild:$tier"
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
