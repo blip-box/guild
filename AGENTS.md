@@ -108,10 +108,12 @@ CI runs exactly these, so a clean local run means a clean CI run.
 
 Each item is its own pull request, in order:
 
-1. The confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the triage
-   workflow and `tools/guild_oracle_check.py`) as the adopter's PR.
-2. The Builder and Reviewer on the Agent SDK, producing patches and findings that a
+1. The Builder and Reviewer on the Agent SDK, producing patches and findings that a
    plain job applies; the Planner for features.
-3. The drill runner and the first drills from confusable's history.
-4. The ledger branch, the weekly report and the kill-switch rehearsal.
-5. The Releaser.
+2. The drill runner and the first drills from confusable's history.
+3. The ledger branch, the weekly report and the kill-switch rehearsal.
+4. The Releaser.
+
+Done: the shell, the triage workflow template, the issue forms, the adopting
+guide, and the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the
+triage workflow and `tools/guild_oracle_check.py`; confusable PR #27).
