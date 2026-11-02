@@ -47,8 +47,14 @@ from a fixed list, expected values) that the script turns into a call.
 
 ## Outside the repository
 
-Stewards create these; agents cannot.
+Stewards create these; agents cannot. Set the kill switch (item 4) before the
+workflow lands and clear it when the rest exists: a run on an issue opened
+before then fails at intake, which is noise, not harm.
 
+0. **The shell's visibility.** The workflow checks `blip-box/guild` out with
+   the adopting repository's own token, which reads no other private
+   repository, so `blip-box/guild` is public. The adopter never grants the
+   workflow a token for it.
 1. **The Triage App.** A GitHub App owned by the organisation with the
    repository permission issues: write and nothing else, installed on the
    adopting repository only. Its ID goes in the variable
