@@ -228,4 +228,18 @@ def test_every_template_renders_for_its_record(root: Path) -> None:
             record, templates, {"decision_url": "u", "charter_url": "c"}
         )
         assert comment.endswith("Decision record: u\n")
-    assert seen == {p.stem for p in templates.glob("*.md")}
+    others = {
+        "plan_ready",
+        "plan_needs_clarification",
+        "plan_out_of_scope",
+        "build_failed",
+        "build_opened",
+    }
+    assert seen == {p.stem for p in templates.glob("*.md")} - others
+    for template in sorted(others):
+        record = triage.apply_policy(output(kind="other", clause=None), "not_run")
+        record["template"] = template
+        comment = triage.render_comment(
+            record, templates, {"decision_url": "u", "charter_url": "c"}
+        )
+        assert comment.endswith("Decision record: u\n")
