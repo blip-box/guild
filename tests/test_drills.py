@@ -65,6 +65,23 @@ def test_the_shipped_drills_load() -> None:
             assert drill["created"] >= "2026-11-03"
 
 
+def test_shipped_diffs_keep_their_context_lines() -> None:
+    """A blank context line is one space; a whitespace hook must not trim it."""
+    for path in sorted(DRILLS.rglob("*.diff")):
+        in_hunk = False
+        for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+            if line.startswith("@@"):
+                in_hunk = True
+            elif line.startswith(("diff ", "index ", "--- ", "+++ ")):
+                in_hunk = False
+            elif in_hunk and line:
+                assert line[0] in " +-\\", f"{path.name}:{number}: {line!r}"
+            elif in_hunk and not line:
+                assert number == path.read_text(encoding="utf-8").count("\n") + 1, (
+                    f"{path.name}:{number}: a blank line inside a hunk"
+                )
+
+
 def test_injection_drill_carries_hidden_characters() -> None:
     drill = next(
         d

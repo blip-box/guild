@@ -17,6 +17,8 @@ repos:
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: trailing-whitespace
+        # A patch's blank context line is one space; trimming it breaks the patch.
+        exclude: '\.diff$'
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.1
