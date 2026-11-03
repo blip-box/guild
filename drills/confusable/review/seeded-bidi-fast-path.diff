@@ -1,0 +1,43 @@
+diff --git a/src/confusable/_skeleton.py b/src/confusable/_skeleton.py
+index fd1d6e2..2a919c3 100644
+--- a/src/confusable/_skeleton.py
++++ b/src/confusable/_skeleton.py
+@@ -48,16 +48,12 @@ def _character_class(classes: set[str]) -> re.Pattern[str]:
+ 
+ @cache
+ def _odd_level() -> re.Pattern[str]:
+-    """Return a regex for the classes that can reach an odd embedding level.
+-
+-    Only these classes can put text at an odd embedding level in a
+-    left-to-right paragraph. Without any of them, display order is logical
+-    order and nothing is mirrored, so bidiSkeleton(LTR, X) is
+-    internalSkeleton(X). UTS #39 states this fast path with only R and AL,
+-    which is wrong: see confusable._bidi and
+-    test_uts39_fast_path_needs_more_than_r_and_al.
++    """Return a regex for the right-to-left classes.
++
++    UTS #39 section 4: in a left-to-right paragraph, text without R or AL
++    characters keeps its order, so bidiSkeleton(LTR, X) is internalSkeleton(X).
+     """
+-    return _character_class({"R", "AL", "AN", "RLE", "RLO", "RLI"})
++    return _character_class({"R", "AL"})
+ 
+ 
+ def _internal_skeleton(text: str) -> str:
+diff --git a/tests/conformance/test_conformance.py b/tests/conformance/test_conformance.py
+index 2ea94eb..48bc4a9 100644
+--- a/tests/conformance/test_conformance.py
++++ b/tests/conformance/test_conformance.py
+@@ -268,12 +268,6 @@ def test_left_to_right_display_without_odd_level_classes_is_identity(text: str)
+     assert adapter.bidi_display(text, "LTR") == text
+ 
+ 
+-def test_uts39_fast_path_needs_more_than_r_and_al() -> None:
+-    for text in ("invoice\u202egpj.exe", "\u0661(\u0662", "\u202ba!\u202c"):
+-        assert not {_bidi_class(ord(c)) for c in text} & {"R", "AL"}
+-        assert adapter.bidi_display(text, "LTR") != text
+-
+-
+ # Character properties, for the generated data tables.
+ 
+ 

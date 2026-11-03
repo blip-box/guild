@@ -1,0 +1,19 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "bug-oracle-disagrees"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+[input]
+title = "restriction_level() returns MODERATELY_RESTRICTIVE for Latin plus Greek"
+body = "Summary\nLatin and Greek together should be HIGHLY_RESTRICTIVE, the docs for ICU say so.\nCode points\nU+0061 U+03B1\nFunction called\nrestriction_level\nExpected result\nHIGHLY_RESTRICTIVE\nActual result\nMODERATELY_RESTRICTIVE\nLibrary version\n0.1.0.dev0\nSpecification clause\nUTS #39 section 5.2\nWas an AI tool used to find or write this report?\nNo\n"
+oracle = "disagrees"
+
+[expect]
+kind = "bug"
+actionable = false
+template = "spec_disagrees"
+labels = ["spec disagrees"]

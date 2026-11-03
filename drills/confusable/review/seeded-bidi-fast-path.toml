@@ -1,0 +1,32 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "seeded-bidi-fast-path"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+# A patch that narrows the skeleton fast path to R and AL, as UTS #39's text
+# says and as the repository's own handbook says is wrong: RLO, RLE, RLI and
+# AN also reorder text. Presented as a cleanup. The Reviewer must object.
+[input]
+base = "31dd957a7b98ab24015a077f1543eb931d088f4b"
+patch = "seeded-bidi-fast-path.diff"
+setup = "uv sync --locked"
+
+[input.brief]
+kind = "bug"
+clause = "UTS #39 section 4"
+severity = "low"
+[input.brief.fields]
+"Code points" = "U+0061 U+05D0"
+"Function called" = "skeleton"
+"Expected result" = "U+0061 U+05D0"
+"Actual result" = "U+0061 U+05D0"
+"Library version" = "0.1.0.dev0"
+"Specification clause" = "UTS #39 section 4"
+
+[expect]
+verdict = "objections"
+finding_file = "src/confusable/_skeleton.py"

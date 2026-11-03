@@ -1,0 +1,19 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "feature-with-clause"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+[input]
+title = "A function that lists the scripts in a string"
+body = "The problem\nTo explain a MIXED_SCRIPT match to a user I need to name the scripts, and the library only tells me the restriction level.\nThe behaviour you want\nA function scripts(text) returning the resolved script set as ISO 15924 codes, for example scripts(U+0070 U+0430 U+0079) giving a set with Latn and Cyrl.\nCharter clause\nC-SCOPE-3\nSpecification\nUTS #39 section 5.1\nWas an AI tool used to write this request?\nNo\n"
+oracle = "not_applicable"
+
+[expect]
+kind = "feature"
+actionable = true
+template = "feature_accepted"
+clause_prefix = "C-"

@@ -26,6 +26,7 @@ from guildkit import (
     builder,
     commands,
     config,
+    drills,
     ledger,
     planner,
     reviewer,
@@ -584,6 +585,118 @@ def _cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_drill_list(args: argparse.Namespace) -> int:
+    for suite in drills.SUITES:
+        for drill in drills.load(args.dir, suite):
+            print(f"{suite}\t{drill['name']}\t{drill['created']}")
+    return 0
+
+
+def _canned_caller(path: Path) -> triage.Caller:
+    canned = path.read_text(encoding="utf-8")
+
+    def call(
+        system: str, user: str, *, model: str, max_tokens: int
+    ) -> tuple[str, triage.Usage]:
+        usage: triage.Usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+        return canned, usage
+
+    return call
+
+
+def _cmd_drill_run(args: argparse.Namespace) -> int:
+    """Run every drill of a suite `--trials` times, appending trials to `--out`."""
+    cfg = config.load(args.config)
+    found = drills.load(args.dir, args.suite)
+    if args.only:
+        found = [d for d in found if d["name"] in args.only]
+    if args.suite == "triage":
+        if args.reply is not None:
+            call = _canned_caller(args.reply)
+        else:
+            if not any(name in os.environ for name in CREDENTIALS):
+                print(f"drill-run: none of {CREDENTIALS} is set", file=sys.stderr)
+                return 2
+            import anthropic
+
+            call = triage.anthropic_caller(anthropic.Anthropic(max_retries=1))
+        role = (args.roles / "triage.md").read_text(encoding="ascii")
+    else:
+        if args.source is None or args.work is None:
+            print("drill-run: --source and --work are needed", file=sys.stderr)
+            return 2
+        if RUNNER is None and not any(name in os.environ for name in CREDENTIALS):
+            print(f"drill-run: none of {CREDENTIALS} is set", file=sys.stderr)
+            return 2
+        role = (args.roles / f"{args.suite}er.md").read_text(encoding="ascii")
+    failed = 0
+    for drill in found:
+        for trial in range(1, args.trials + 1):
+            try:
+                if args.suite == "triage":
+                    result = drills.run_triage(
+                        drill, trial, call=call, cfg=cfg, role=role
+                    )
+                else:
+                    work = args.work / f"{drill['name']}-{trial}"
+                    transcript = args.work / f"{drill['name']}-{trial}.transcript.jsonl"
+                    run = (
+                        drills.run_review
+                        if args.suite == "review"
+                        else drills.run_build
+                    )
+                    result = run(
+                        drill,
+                        trial,
+                        cfg=cfg,
+                        source=args.source,
+                        work=work,
+                        role=role,
+                        transcript=transcript,
+                        runner=RUNNER,
+                    )
+            except drills.DrillError as error:
+                result = {
+                    "suite": args.suite,
+                    "drill": drill["name"],
+                    "created": drill["created"],
+                    "trial": trial,
+                    "passed": False,
+                    "reasons": [f"drill error: {error}"],
+                    "model": "",
+                    "cost_usd": 0.0,
+                    "turns": 0,
+                    "duration_ms": 0,
+                }
+            drills.write_trials(args.out, [result])
+            state = "pass" if result["passed"] else "FAIL"
+            failed += not result["passed"]
+            print(f"{args.suite} {drill['name']} trial {trial}: {state}")
+    return 0 if not failed else 1
+
+
+def _cmd_drill_score(args: argparse.Namespace) -> int:
+    result = drills.score(
+        drills.read_trials(args.results), suite=args.suite, cutoff=args.cutoff
+    )
+    _write_json(args.out, result)
+    print(drills.markdown(result))
+    return 0
+
+
+def _cmd_drill_compare(args: argparse.Namespace) -> int:
+    comparison = drills.compare(
+        _read_json(args.baseline), _read_json(args.candidate), noise=args.noise
+    )
+    print(json.dumps(comparison, sort_keys=True, indent=2))
+    return 0 if comparison["ok"] else 1
+
+
 def _cmd_render(args: argparse.Namespace) -> int:
     record = _read_json(args.record)
     values = {"decision_url": args.decision_url, "charter_url": args.charter_url}
@@ -731,6 +844,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kind", choices=("plan", "review", "check", "run"), required=True)
     p.add_argument("--file", type=Path, required=True)
     p.set_defaults(func=_cmd_summary)
+
+    p = sub.add_parser("drill-list", help="list the drills under a directory")
+    p.add_argument("--dir", type=Path, required=True)
+    p.set_defaults(func=_cmd_drill_list)
+
+    p = sub.add_parser("drill-run", help="run a suite of drills, k trials each")
+    p.add_argument("--dir", type=Path, required=True, help="the drills directory")
+    p.add_argument("--suite", choices=drills.SUITES, required=True)
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--roles", type=Path, required=True, help="the roles directory")
+    p.add_argument("--trials", type=int, default=1)
+    p.add_argument("--only", action="append", default=[], help="a drill name")
+    p.add_argument("--source", type=Path, help="a clone of the adopting repository")
+    p.add_argument("--work", type=Path, help="where the checkouts are made")
+    p.add_argument("--reply", type=Path, help="a canned triage reply, for tests")
+    p.add_argument("--out", type=Path, required=True, help="trials, JSON lines")
+    p.set_defaults(func=_cmd_drill_run)
+
+    p = sub.add_parser("drill-score", help="summarise trials as pass@1 and pass^k")
+    p.add_argument("--results", type=Path, required=True)
+    p.add_argument("--suite", choices=drills.SUITES, required=True)
+    p.add_argument("--cutoff", required=True, help="the fresh bucket starts here")
+    p.add_argument("--out", type=Path, required=True)
+    p.set_defaults(func=_cmd_drill_score)
+
+    p = sub.add_parser("drill-compare", help="candidate score against a baseline")
+    p.add_argument("--baseline", type=Path, required=True)
+    p.add_argument("--candidate", type=Path, required=True)
+    p.add_argument("--noise", type=float, default=0.1)
+    p.set_defaults(func=_cmd_drill_compare)
 
     p = sub.add_parser("command", help="parse a steward command from a comment body")
     p.add_argument("--body", type=Path, required=True)

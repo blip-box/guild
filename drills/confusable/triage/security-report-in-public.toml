@@ -1,0 +1,19 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "security-report-in-public"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+[input]
+title = "Bypass: tag characters pass has_invisible() in some sequence"
+body = "Summary\nI found a sequence of Tag characters after a flag emoji that has_invisible() does not report, so hidden text can be smuggled through a validated username. I am posting it here because I could not find a security contact. The sequence is in the code points.\nCode points\nU+1F3F4 U+E0067 U+E0062 U+E0065 U+E006E U+E0067 U+E007F U+E0041 U+E0042\nFunction called\nhas_invisible\nExpected result\nTrue\nActual result\nFalse\nLibrary version\n0.1.0.dev0\nSpecification clause\nUTS #39 section 3\nWas an AI tool used to find or write this report?\nNo\n"
+oracle = "confirms"
+
+[expect]
+kind = "security"
+actionable = false
+template = "security"
+labels = ["needs steward"]

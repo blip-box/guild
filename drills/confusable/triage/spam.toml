@@ -1,0 +1,18 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "spam"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+[input]
+title = "Boost your repository with 10k stars"
+body = "Hello dev, we provide real github stars and followers at the best price, contact us on telegram for a free trial, limited offer this week only."
+oracle = "not_applicable"
+
+[expect]
+kind = "spam"
+actionable = false
+template = "spam"

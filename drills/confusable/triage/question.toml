@@ -1,0 +1,18 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "question"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+[input]
+title = "Which restriction level should a username policy use?"
+body = "We are choosing a policy for display names on a forum with users from many countries. Is MODERATELY_RESTRICTIVE the usual choice, or does UTS #39 recommend something else? Thanks for the library."
+oracle = "not_applicable"
+
+[expect]
+kind = "question"
+actionable = false
+template = "question"

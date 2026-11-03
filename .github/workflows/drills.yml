@@ -1,0 +1,135 @@
+# Run a suite of drills against confusable and score it. Started by hand.
+#
+# Drills gate every change to a pinned part of the harness: a model, the
+# Agent SDK and Claude Code versions, an effort level, a role prompt. The
+# triage suite costs cents; a build drill can cost its cap per trial, so
+# the trial count is an input and defaults to one.
+#
+# Needs the model credential as the adopters' workflows do: the federation
+# variables (ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID,
+# ANTHROPIC_SERVICE_ACCOUNT_ID) or, until then, the secret ANTHROPIC_API_KEY.
+name: Drills
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: The suite to run
+        type: choice
+        options: [triage, review, build]
+        default: triage
+      trials:
+        description: Trials per drill (pass^k needs several)
+        type: number
+        default: 1
+      cutoff:
+        description: The fresh bucket starts at this date (the model's cutoff)
+        type: string
+        default: "2026-06-01"
+      only:
+        description: One drill name, or empty for the whole suite
+        type: string
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: drills-${{ inputs.suite }}
+  cancel-in-progress: false
+
+jobs:
+  drills:
+    name: ${{ inputs.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read # this repository and the public adopter
+      id-token: write # workload identity federation for the model credential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/confusable
+          path: source
+          fetch-depth: 0 # the drills name base commits in the history
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --extra agents
+      - name: Identity token
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Run
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          SUITE: ${{ inputs.suite }}
+          TRIALS: ${{ inputs.trials }}
+          ONLY: ${{ inputs.only }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          mkdir -p "$RUNNER_TEMP/work" "$RUNNER_TEMP/out"
+          only=()
+          [ -z "$ONLY" ] || only=(--only "$ONLY")
+          uv run --no-sync guildkit drill-run \
+            --dir drills/confusable \
+            --suite "$SUITE" \
+            --config source/guild.toml \
+            --roles roles \
+            --trials "$TRIALS" \
+            --source "$PWD/source" \
+            --work "$RUNNER_TEMP/work" \
+            --out "$RUNNER_TEMP/out/trials.jsonl" \
+            "${only[@]}" || true
+      - name: Score
+        env:
+          SUITE: ${{ inputs.suite }}
+          CUTOFF: ${{ inputs.cutoff }}
+        run: |
+          {
+            echo "## Drills: $SUITE"
+            echo
+            uv run --no-sync guildkit drill-score \
+              --results "$RUNNER_TEMP/out/trials.jsonl" \
+              --suite "$SUITE" \
+              --cutoff "$CUTOFF" \
+              --out "$RUNNER_TEMP/out/score.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Compare with the baseline
+        # A committed baseline for the suite, when one exists: the last
+        # accepted score. A drop beyond the noise fails the run.
+        env:
+          SUITE: ${{ inputs.suite }}
+        run: |
+          baseline="drills/confusable/baseline-$SUITE.json"
+          if [ -f "$baseline" ]; then
+            {
+              echo
+              echo "### Against the baseline"
+              echo
+              echo '```json'
+              uv run --no-sync guildkit drill-compare --baseline "$baseline" --candidate "$RUNNER_TEMP/out/score.json" || echo "DROP"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            uv run --no-sync guildkit drill-compare --baseline "$baseline" --candidate "$RUNNER_TEMP/out/score.json" >/dev/null
+          else
+            echo "no baseline for $SUITE yet; commit the score as $baseline to set one"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: drills-${{ inputs.suite }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/out/trials.jsonl
+            ${{ runner.temp }}/out/score.json
+            ${{ runner.temp }}/work/*.transcript.jsonl
+          retention-days: 90

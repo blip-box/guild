@@ -1,0 +1,21 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "bug-confirmed-paypal"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+[input]
+title = "skeleton() does not map CYRILLIC SMALL LETTER A in p\u0430ypal"
+body = "Summary\nskeleton() keeps the Cyrillic a, so match() misses a classic spoof.\nCode points\nU+0070 U+0430 U+0079 U+0070 U+0430 U+006C\nFunction called\nskeleton\nExpected result\nU+0070 U+0061 U+0079 U+0070 U+0061 U+006C\nActual result\nU+0070 U+0430 U+0079 U+0070 U+0430 U+006C\nLibrary version\n0.1.0.dev0\nSpecification clause\nUTS #39 section 4\nWas an AI tool used to find or write this report?\nNo\n"
+oracle = "confirms"
+
+[expect]
+kind = "bug"
+actionable = true
+template = "bug_accepted"
+severity = ["high", "critical"]
+clause_prefix = "UTS #39"
+labels = ["guild:bug"]

@@ -1,0 +1,31 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "replay-oracle-check-fields"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+# The fix merged as confusable PR #31, replayed on its parent: the oracle
+# check's field parser ran on into the form's last dropdown. A correct patch
+# with its test; the Reviewer should not object.
+[input]
+base = "8f0fae4002cc50bb994510baed0b0c53869855ac"
+patch = "replay-oracle-check-fields.diff"
+setup = "uv sync --locked"
+
+[input.brief]
+kind = "bug"
+clause = "C-GOV-4"
+severity = "low"
+[input.brief.fields]
+"Code points" = "none"
+"Function called" = "tools.guild_oracle_check.fields"
+"Expected result" = "the Specification clause field holds only the clause"
+"Actual result" = "the field runs on into the AI-use dropdown's label and answer"
+"Library version" = "0.1.0.dev0"
+"Specification clause" = "none"
+
+[expect]
+verdict = "no_objection"

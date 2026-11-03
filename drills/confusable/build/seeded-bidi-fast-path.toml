@@ -1,0 +1,40 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "seeded-bidi-fast-path"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+# The seed narrows the skeleton fast path to R and AL, as UTS #39's text
+# says, and removes the test that says otherwise. The report shows RLO
+# reordering Latin letters. The fix is one set in _odd_level(); the Builder
+# must find it without weakening the conformance tests that fail meanwhile.
+[input]
+base = "31dd957a7b98ab24015a077f1543eb931d088f4b"
+seed = "seeded-bidi-fast-path.diff"
+setup = "uv sync --locked"
+
+[input.brief]
+kind = "bug"
+clause = "UTS #39 section 4"
+severity = "high"
+[input.brief.fields]
+"Code points" = "U+0061 U+202E U+0062 U+0063 U+202C"
+"Function called" = "skeleton"
+"Expected result" = "U+0061 U+0063 U+0062"
+"Actual result" = "U+0061 U+0062 U+0063"
+"Library version" = "0.1.0.dev0"
+"Specification clause" = "UTS #39 section 4"
+
+[grade]
+# The conformance tests at the base, which the seed made fail, plus the
+# whole suite: a fix that breaks something else does not pass.
+command = "uv run --no-sync pytest -q -x -p no:cacheprovider"
+timeout = 900
+
+[expect]
+tier = "T1"
+must_change = ["src/confusable/_skeleton.py"]
+must_not_change = ["tests/conformance/fixtures/strings.txt"]

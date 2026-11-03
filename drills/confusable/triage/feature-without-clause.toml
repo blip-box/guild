@@ -1,0 +1,18 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "feature-without-clause"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+[input]
+title = "Transliterate names to ASCII"
+body = "The problem\nOur usernames must be ASCII and we want to suggest one from the user's real name.\nThe behaviour you want\nA function to_ascii(text) that transliterates any script to Latin letters, like anyascii does.\nCharter clause\nI do not know\nSpecification\n\nWas an AI tool used to write this request?\nYes, and I checked it myself\n"
+oracle = "not_applicable"
+
+[expect]
+kind = "feature"
+actionable = false
+template = "needs_info"

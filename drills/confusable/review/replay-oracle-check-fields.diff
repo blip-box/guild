@@ -1,0 +1,48 @@
+diff --git a/tests/test_guild_oracle_check.py b/tests/test_guild_oracle_check.py
+index 7cf8f7f..71218b2 100644
+--- a/tests/test_guild_oracle_check.py
++++ b/tests/test_guild_oracle_check.py
+@@ -33,6 +33,16 @@ def test_fields_are_read_by_label() -> None:
+     assert form["Specification clause"] == "UTS #39 section 4"
+ 
+ 
++def test_a_label_that_is_not_collected_ends_the_field_before_it() -> None:
++    # The bug form ends with a dropdown; its label and answer must not run
++    # into the field before it.
++    dropdown = "Was an AI tool used to find or write this report?"
++    form = check.fields(body() + f"\n{dropdown}\n\nNo\n")
++    assert form["Specification clause"] == "UTS #39 section 4"
++    assert dropdown not in form
++    assert "No" not in form.values()
++
++
+ def test_decode_and_other_argument() -> None:
+     assert check.decode(PAYPAL) == "p" + chr(0x430) + "yp" + chr(0x430) + "l"
+     assert check.other_argument('text, "paypal"') == "paypal"
+diff --git a/tools/guild_oracle_check.py b/tools/guild_oracle_check.py
+index b417691..3681587 100644
+--- a/tools/guild_oracle_check.py
++++ b/tools/guild_oracle_check.py
+@@ -53,6 +53,13 @@ LABELS = (
+     "Library version",
+     "Specification clause",
+ )
++# Labels the forms show after those, which end the field before them and are
++# not collected: the dropdowns of the bug and feature forms. Without them the
++# last field would run on into the dropdown's label and answer.
++OTHER_LABELS = (
++    "Was an AI tool used to find or write this report?",
++    "Was an AI tool used to write this request?",
++)
+ _CODE_POINT = re.compile(r"U\+([0-9A-Fa-f]{4,6})")
+ _CALL = re.compile(r"^\s*([a-z_]+)\s*\((.*)\)\s*$", re.DOTALL)
+ _DIRECTION = re.compile(r"direction\s*=\s*[\"']?(ltr|rtl|auto|None)[\"']?")
+@@ -69,6 +76,8 @@ def fields(body: str) -> dict[str, str]:
+         if stripped in LABELS:
+             current = stripped
+             found[current] = []
++        elif stripped in OTHER_LABELS:
++            current = None
+         elif current is not None and stripped:
+             found[current].append(stripped)
+     return {label: "\n".join(lines) for label, lines in found.items()}
