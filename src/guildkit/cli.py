@@ -147,6 +147,7 @@ def _cmd_triage(args: argparse.Namespace) -> int:
         "at": _now(),
         "repo": cfg["repo"],
         "number": int(snap["number"]),
+        "author": ledger.identifier(str(snap["author"])),
         "role": "triage",
         "model": cfg["triage"]["model"],
         "input_tokens": usage["input_tokens"],
@@ -186,11 +187,13 @@ def _entry(
     decided_by: str,
     decider: str,
     content_hash: str,
+    author: str = "",
 ) -> ledger.Entry:
     entry: ledger.Entry = {
         "at": _now(),
         "repo": cfg["repo"],
         "number": number,
+        "author": ledger.identifier(author),
         "role": role,
         "model": model,
         "input_tokens": usage["input_tokens"],
@@ -362,6 +365,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         decided_by="model",
         decider=args.decider,
         content_hash=snap["content_hash"],
+        author=str(snap["author"]),
     )
     _write_json(args.out, plan)
     _write_json(args.run, run)
@@ -422,6 +426,7 @@ def _cmd_patch_check(args: argparse.Namespace) -> int:
         decided_by="model",
         decider=args.decider,
         content_hash=data["content_hash"],
+        author=str(data.get("author", "")),
     )
     _write_json(args.out, check)
     _write_json(args.ledger_entry, entry)
@@ -473,6 +478,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
         decided_by="model",
         decider=args.decider,
         content_hash=data["content_hash"],
+        author=str(data.get("author", "")),
     )
     _write_json(args.out, review)
     _write_json(args.run, run)
@@ -582,6 +588,87 @@ def _cmd_summary(args: argparse.Namespace) -> int:
         )
         for tool, count in data["tool_calls"].items():
             print(f"- {tool}: {count}")
+    return 0
+
+
+def _read_ledger(path: Path | None) -> list[ledger.Entry]:
+    if path is None or not path.is_file():
+        return []
+    return list(ledger.read(path))
+
+
+def _cmd_brake(args: argparse.Namespace) -> int:
+    """Decide whether triage may run now: exit 0 to go, 4 or 5 to queue."""
+    cfg = config.load(args.config)
+    snap = _read_json(args.snapshot)
+    author = ledger.identifier(str(snap["author"]))
+    now = args.now or _now()
+    reason = ledger.brake(
+        _read_ledger(args.ledger),
+        author=author,
+        now=now,
+        per_author_per_day=cfg["triage"]["per_author_per_day"],
+        daily_runs=cfg["triage"]["daily_runs"],
+    )
+    if reason is None:
+        print("brake: go")
+        return 0
+    usage: triage.Usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+    }
+    entry = _entry(
+        cfg,
+        number=int(snap["number"]),
+        role="triage",
+        model="none",
+        usage=usage,
+        cost=0.0,
+        outcome="skipped",
+        citation="",
+        decided_by="script",
+        decider="",
+        content_hash=snap["content_hash"],
+        author=author,
+    )
+    _write_json(args.entry, entry)
+    _write_json(args.post, _post_record("queued", ["guild:queued"], None))
+    print(f"brake: queued, the {reason} limit is reached")
+    return 4 if reason == "author" else 5
+
+
+def _cmd_ledger_input(args: argparse.Namespace) -> int:
+    """Write the commit input that appends the entry files to the ledger."""
+    cfg = config.load(args.config)
+    entries = [ledger.validate(_read_json(path)) for path in args.entry]
+    current = (
+        args.current.read_text(encoding="ascii")
+        if args.current is not None and args.current.is_file()
+        else ""
+    )
+    roles = ", ".join(sorted({e["role"] for e in entries}))
+    numbers = ", ".join(f"#{n}" for n in sorted({e["number"] for e in entries}))
+    message = f"ledger: {roles} for {numbers}\n\nRun: {args.run_url}\n"
+    payload = ledger.commit_input(
+        current,
+        entries,
+        repo=cfg["repo"],
+        branch=args.branch,
+        head=args.head,
+        message=message,
+    )
+    _write_json(args.out, {"input": payload})
+    return 0
+
+
+def _cmd_ledger_report(args: argparse.Namespace) -> int:
+    config.load(args.config)
+    data = ledger.report(_read_ledger(args.ledger), since=args.since, until=args.until)
+    args.out.write_text(ledger.report_markdown(data), encoding="ascii")
+    if args.json is not None:
+        _write_json(args.json, data)
     return 0
 
 
@@ -844,6 +931,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kind", choices=("plan", "review", "check", "run"), required=True)
     p.add_argument("--file", type=Path, required=True)
     p.set_defaults(func=_cmd_summary)
+
+    p = sub.add_parser("brake", help="whether triage may run now, by the ledger")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--ledger", type=Path, help="the ledger file; absent means empty")
+    p.add_argument("--snapshot", type=Path, required=True)
+    p.add_argument("--now", help="an ISO timestamp, for tests")
+    p.add_argument("--entry", type=Path, required=True, help="the skipped entry")
+    p.add_argument("--post", type=Path, required=True, help="the record to render")
+    p.set_defaults(func=_cmd_brake)
+
+    p = sub.add_parser("ledger-input", help="createCommitOnBranch input for entries")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--current", type=Path, help="the ledger as it is on the branch")
+    p.add_argument("--entry", type=Path, action="append", required=True)
+    p.add_argument("--branch", default=ledger.LEDGER_BRANCH)
+    p.add_argument("--head", required=True, help="the branch head the input expects")
+    p.add_argument("--run-url", required=True)
+    p.add_argument("--out", type=Path, required=True)
+    p.set_defaults(func=_cmd_ledger_input)
+
+    p = sub.add_parser("ledger-report", help="the weekly report from the ledger")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--ledger", type=Path, required=True)
+    p.add_argument("--since", required=True, help="YYYY-MM-DD, inclusive")
+    p.add_argument("--until", required=True, help="YYYY-MM-DD, exclusive")
+    p.add_argument("--out", type=Path, required=True, help="the Markdown")
+    p.add_argument("--json", type=Path, help="the numbers")
+    p.set_defaults(func=_cmd_ledger_report)
 
     p = sub.add_parser("drill-list", help="list the drills under a directory")
     p.add_argument("--dir", type=Path, required=True)

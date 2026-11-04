@@ -42,6 +42,7 @@ class Brief(TypedDict):
 
     repo: str
     number: int
+    author: str
     kind: Literal["bug", "feature"]
     clause: str | None
     severity: str
@@ -99,6 +100,7 @@ def from_triage(snap: Snapshot, record: Record, plan: Plan | None = None) -> Bri
     return {
         "repo": snap["repo"],
         "number": int(snap["number"]),
+        "author": snap["author"],
         "kind": kind,
         "clause": record["clause"],
         "severity": record["severity"],

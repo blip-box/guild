@@ -20,8 +20,11 @@
 # secret GUILD_BUILDER_APP_KEY (contents: write, pull requests: write), the
 # variable GUILD_GATE_APP_ID and the secret GUILD_GATE_APP_KEY (checks: write).
 #
+# Every run ends with the ledger job, which appends the entries of the jobs
+# that ran through the Builder App's token.
+#
 # Not yet: the second Builder attempt on an escalated model, egress
-# filtering of the agent jobs (no first-party mechanism), the ledger append.
+# filtering of the agent jobs (no first-party mechanism).
 name: Guild build
 
 on:
@@ -182,14 +185,18 @@ jobs:
             --role .guild/roles/triage.md \
             --oracle "$(cat oracle.txt)" \
             --out record.json \
-            --ledger-entry triage-entry.json
+            --ledger-entry entry-triage.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: record
           path: |
             snapshot.json
             record.json
-            triage-entry.json
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: entry-triage
+          path: entry-triage.json
           retention-days: 90
 
   plan:
@@ -248,7 +255,7 @@ jobs:
             --out "$RUNNER_TEMP/out/plan.json" \
             --post "$RUNNER_TEMP/out/post.json" \
             --run "$RUNNER_TEMP/out/run.json" \
-            --ledger-entry "$RUNNER_TEMP/out/entry.json" \
+            --ledger-entry "$RUNNER_TEMP/out/entry-planner.json" \
             --transcript "$RUNNER_TEMP/out/transcript.jsonl" \
             --decider "$DECIDER" || true
           {
@@ -266,7 +273,12 @@ jobs:
             ${{ runner.temp }}/out/plan.json
             ${{ runner.temp }}/out/post.json
             ${{ runner.temp }}/out/run.json
-            ${{ runner.temp }}/out/entry.json
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: entry-planner
+          path: ${{ runner.temp }}/out/entry-planner.json
           retention-days: 90
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -464,7 +476,7 @@ jobs:
             --diff patch.diff \
             --run run.json \
             --out check.json \
-            --ledger-entry entry.json \
+            --ledger-entry entry-builder.json \
             --decider "$DECIDER" || status=$?
           {
             echo "## Guild build"
@@ -478,9 +490,13 @@ jobs:
         if: always()
         with:
           name: check
-          path: |
-            check.json
-            entry.json
+          path: check.json
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: entry-builder
+          path: entry-builder.json
           retention-days: 90
 
   build-failed:
@@ -587,7 +603,7 @@ jobs:
             --charter CHARTER.md \
             --out "$RUNNER_TEMP/out/review.json" \
             --run "$RUNNER_TEMP/out/run.json" \
-            --ledger-entry "$RUNNER_TEMP/out/entry.json" \
+            --ledger-entry "$RUNNER_TEMP/out/entry-reviewer.json" \
             --transcript "$RUNNER_TEMP/out/transcript.jsonl" \
             --decider "$DECIDER" || true
           {
@@ -603,7 +619,12 @@ jobs:
           path: |
             ${{ runner.temp }}/out/review.json
             ${{ runner.temp }}/out/run.json
-            ${{ runner.temp }}/out/entry.json
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: entry-reviewer
+          path: ${{ runner.temp }}/out/entry-reviewer.json
           retention-days: 90
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -768,3 +789,71 @@ jobs:
           gh label create "guild:built" --force --color 5319e7 --description "Set by Guild"
           gh issue edit "$NUMBER" --add-label "guild:built"
           gh issue comment "$NUMBER" --body-file comment.md
+
+  ledger:
+    name: ledger
+    needs: [intake, triage, plan, plan-post, build, check, build-failed, review, open]
+    if: always() && needs.intake.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the pinned shell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: guild.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: entry-*
+          merge-multiple: true
+          path: entries
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.GUILD_BUILDER_APP_ID }}
+          private-key: ${{ secrets.GUILD_BUILDER_APP_KEY }}
+          permission-contents: write
+      - name: Append
+        # As in guild-triage.yml: one signed commit with every entry, rebuilt
+        # from the new head when a concurrent run got there first.
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          entries=$(find entries -name 'entry-*.json' | sort)
+          [ -n "$entries" ] || { echo "no entries"; exit 0; }
+          if ! head=$(gh api "repos/$GH_REPO/git/ref/heads/guild-ledger" --jq .object.sha 2>/dev/null); then
+            echo "::warning::no guild-ledger branch; the entries stay in the artifacts"
+            exit 0
+          fi
+          args=()
+          for f in $entries; do args+=(--entry "$f"); done
+          cat > query.graphql <<'QUERY'
+          mutation($input: CreateCommitOnBranchInput!) {
+            createCommitOnBranch(input: $input) { commit { oid } }
+          }
+          QUERY
+          for attempt in 1 2 3 4 5; do
+            gh api "repos/$GH_REPO/contents/ledger.jsonl?ref=guild-ledger" --jq .content 2>/dev/null \
+              | base64 -d > current.jsonl || : > current.jsonl
+            uv run --project .guild guildkit ledger-input \
+              --config guild.toml --current current.jsonl "${args[@]}" \
+              --head "$head" --run-url "$RUN_URL" --out input.json
+            if gh api graphql -F input=@input.json -F query=@query.graphql --jq '.data.createCommitOnBranch.commit.oid'; then
+              exit 0
+            fi
+            head=$(gh api "repos/$GH_REPO/git/ref/heads/guild-ledger" --jq .object.sha)
+            echo "attempt $attempt failed; retrying from $head"
+          done
+          echo "::error::the ledger append failed five times"
+          exit 1

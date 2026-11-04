@@ -11,11 +11,15 @@ adopter pins one commit of it.
 - `guild.toml`: copied from `templates/guild.toml` and edited: the stewards,
   the tier rules, the agents' models, limits and test command (`[planner]`,
   `[builder]`, `[reviewer]`), and the prices. Tier 2, and on the reject list.
-- `.github/workflows/guild-triage.yml` and `guild-build.yml`: copied from
-  `templates/workflows/`. Workflows are on the reject list: agents draft them,
-  a steward commits them. The build workflow runs on a steward's `/guild plan`
-  or `/guild build` under an issue, checked against `guild.toml` and the
-  steward's live permission; it installs the shell with its `agents` extra.
+- `.github/workflows/guild-triage.yml`, `guild-build.yml`, `guild-batch.yml`
+  and `guild-report.yml`: copied from `templates/workflows/`. Workflows are on
+  the reject list: agents draft them, a steward commits them. The build
+  workflow runs on a steward's `/guild plan` or `/guild build` under an issue,
+  checked against `guild.toml` and the steward's live permission; it installs
+  the shell with its `agents` extra. The batch and report workflows are
+  scheduled: add both to the `scheduled` job of the repository's CI, which
+  fails while a scheduled workflow is disabled, as they open an issue when
+  they fail.
 - `.github/ISSUE_TEMPLATE/`: copied from `templates/ISSUE_TEMPLATE/`. The bug
   form's fields are what the oracle check reads.
 - `tools/guild_oracle_check.py`: the adopter's oracle check (below). Optional:
@@ -88,6 +92,19 @@ before then fails at intake, which is noise, not harm.
    workflow skips its first job. Rehearse it.
 6. **Labels.** The workflow creates the labels it uses (`guild:*`, `needs
    info`, `needs steward`, `spec disagrees`, `severity:*`) on first use.
+7. **The ledger branch.** An orphan branch `guild-ledger` with an empty
+   `ledger.jsonl`, created once by a steward:
+
+       git checkout --orphan guild-ledger && git rm -rfq . && : > ledger.jsonl
+       git add ledger.jsonl && git commit -m "ledger: start" && git push origin guild-ledger
+       git checkout main
+
+   Then a branch ruleset on `guild-ledger`: block force pushes and deletion,
+   require linear history, and restrict updates with the Builder App as the
+   only bypass, so only the ledger jobs append. Without the branch the ledger
+   jobs warn and keep the entries in the run's artifacts, and the brakes see
+   an empty ledger. The weekly report posts to an issue named "Guild weekly
+   report", which a steward pins; `docs/operations.md` has the rest.
 
 ## Shadow mode
 

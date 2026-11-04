@@ -24,11 +24,12 @@ check on a patch), `planner` and `reviewer` (their schemas, validation and
 prompts). The `guildkit` command line chains them. The triage and build workflow
 templates, the issue forms and the adopting guide exist (`docs/adopting.md`),
 and so do `drills` (the runner, the graders and the scores) with the first
-drills for confusable under `drills/confusable/` and the `Drills` workflow.
-Nothing has run against a live repository yet, and no drill has run with a
-model. Not built: the ledger branch tooling, the brakes that need it, the weekly
-reports, the second Builder attempt on an escalated model, egress filtering of
-the agent jobs, the rubric grader and the weekly canary.
+drills for confusable under `drills/confusable/` and the `Drills` workflow, and
+the ledger's brakes, commit input and weekly report with the batch and report
+workflow templates. Nothing has run against a live repository yet, and no drill
+has run with a model. Not built: the second Builder attempt on an escalated
+model, egress filtering of the agent jobs, the rubric grader and the weekly
+canary.
 
 ## Decisions
 
@@ -50,7 +51,9 @@ the agent jobs, the rubric grader and the weekly canary.
 | Credentials | Workload Identity Federation from GitHub Actions, through the SDK's own resolution: `id-token: write`, an identity token file and the federation variables, with no `ANTHROPIC_API_KEY` in the job. The federation rule is pinned to the repository and to `refs/heads/main`. The only hard cost cap is the workspace spend limit in the Console. |
 | Oracle check | The adopter's script, run by the intake job from the base branch with no secrets, writes one of `confirms`, `disagrees`, `not_applicable`, `not_run`, `error` (`docs/adopting.md`). Policy: a bug is accepted only on `confirms`; `disagrees` goes to a steward with the citation; `not_run` and `error` escalate to a steward, because the harness failed, not the reporter; `not_applicable` asks the reporter for a reproducer. |
 | Triggers | The triage and build workflows run on `issue_comment`, which zizmor flags, with a justification comment: the text never reaches a shell or a token, the intake job holds no secret, the triage model has no tools, and the agents never see the comment. Keep that true. |
-| Ledger | One JSON line per run with sorted keys. Every field is a number, an enumerated value, an identifier or a hash; `ledger.validate` rejects anything else, so no model text can reach it. |
+| Ledger | One JSON line per run with sorted keys. Every field is a number, an enumerated value, an identifier or a hash; `ledger.validate` rejects anything else, so no model text can reach it. It lives as `ledger.jsonl` on the adopter's `guild-ledger` branch, appended by the `ledger` job that ends every workflow: the job downloads the run's `entry-*` artifacts, builds one `createCommitOnBranch` input with `guildkit ledger-input` and sends it with the Builder App's token, so the commit is signed and names the head it expects; a concurrent append makes it rebuild from the new head, five times. Without the branch the job warns and the entries stay in the artifacts. The weekly report audits that no commit removed a line. Entries carry the issue author's login, so the brakes can count by author. |
+| Brakes | `ledger.brake` counts the day's triage entries, the author's against `per_author_per_day` and all against `daily_runs`, skipped ones included. The intake job queues an issue that hits a limit: label `guild:queued`, the `queued` comment, a `skipped` entry. `guild-batch.yml` dispatches `guild-triage.yml` for queued issues twice a day through its `workflow_dispatch` trigger, which reads the issue through the API; the brakes apply again, so a flood drains at the day's limit. |
+| Reports | `guild-report.yml` runs weekly: fetches the ledger branch, fails if any commit removed a line, counts the week with `ledger.report` and comments the Markdown on the "Guild weekly report" issue through the Triage App. The two scheduled templates open an issue when they fail and must be listed in the adopter's `scheduled` CI job. `docs/operations.md` has the kill-switch rehearsal. |
 | ASCII | Python source, TOML, YAML, the role prompts and the comment templates are ASCII, so no look-alike or hidden character can change what a model or a person reads. Other tracked files may hold visible non-ASCII characters but nothing invisible or bidirectional. `tests/test_hygiene.py` checks both with `confusable`. |
 
 ## Commands
@@ -89,14 +92,17 @@ CI runs exactly these, so a clean local run means a clean CI run.
 - `roles/`: the role prompts, one file per role. ASCII.
 - `templates/guild.toml`: the example configuration, the one the tests load.
 - `templates/comments/`: the comment templates triage posts from.
-- `templates/workflows/guild-triage.yml` and `guild-build.yml`: the workflows an
-  adopter copies. They are linted by hand with zizmor and actionlint, which only
-  scan `.github/`.
+- `templates/workflows/guild-triage.yml`, `guild-build.yml`, `guild-batch.yml`
+  and `guild-report.yml`: the workflows an adopter copies. They are linted by
+  hand with zizmor and actionlint, which only scan `.github/`;
+  `tests/test_templates.py` checks the kill switch, the pins and the
+  placeholders.
 - `templates/pr/`: the pull request body and the commit message.
 - `templates/ISSUE_TEMPLATE/`: the issue forms; the bug form's fields are what the
   oracle check reads.
 - `docs/plan.md`: the design and its decision log. `docs/adopting.md`: what an
-  adopter adds and what stewards set up. `docs/research/`: the research.
+  adopter adds and what stewards set up. `docs/operations.md`: the kill switch
+  and its rehearsal, the brakes, the ledger. `docs/research/`: the research.
 - `.github/workflows/drills.yml`: runs a suite of drills against confusable by
   hand and scores it, with the model credential this repository holds.
 - `tests/`: pytest and hypothesis. `tests/test_hygiene.py` is the character check.
@@ -134,16 +140,16 @@ CI runs exactly these, so a clean local run means a clean CI run.
 
 Each item is its own pull request, in order:
 
-1. The ledger branch, the weekly report and the kill-switch rehearsal; the brakes
-   that need the ledger.
-2. The rubric grader for build drills (maintainer acceptance, as a second judge
+1. The rubric grader for build drills (maintainer acceptance, as a second judge
    that may answer unknown) and the weekly canary of a few drills at one trial,
    with an issue on failure.
-3. The second Builder attempt on an escalated model.
-4. The Releaser.
+2. The second Builder attempt on an escalated model.
+3. The Releaser.
 
 Done: the shell, the triage workflow template, the issue forms, the adopting
 guide, the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the
 triage workflow and `tools/guild_oracle_check.py`; confusable PR #27), and the
 Planner, Builder and Reviewer on the Agent SDK with the build workflow template,
-and the drill runner with the first drills (nine triage, two review, one build).
+the drill runner with the first drills (nine triage, two review, one build),
+and the ledger branch tooling with the brakes, the batch, the weekly report and
+the kill-switch rehearsal (`docs/operations.md`).
