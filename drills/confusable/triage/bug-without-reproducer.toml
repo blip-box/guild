@@ -1,0 +1,19 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "bug-without-reproducer"
+created = "2026-11-03"
+repo = "blip-box/confusable"
+
+[input]
+title = "match() is wrong for some Arabic names"
+body = "Summary\nI tried a few Arabic usernames from our database and match() said they were confusable with Latin ones when they clearly are not. I cannot share them.\nCode points\nnot sure\nFunction called\nmatch\nExpected result\nNone\nActual result\nMIXED_SCRIPT\nLibrary version\n0.1.0.dev0\nSpecification clause\n\nWas an AI tool used to find or write this report?\nNo\n"
+oracle = "not_applicable"
+
+[expect]
+kind = "bug"
+actionable = false
+template = "needs_info"
+labels = ["needs info"]

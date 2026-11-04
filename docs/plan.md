@@ -432,3 +432,6 @@ found and what it changed.
 | 56 | Agent commits are made with `createCommitOnBranch` by the Builder App, so GitHub signs them; an `Assisted-by` trailer names the model | Phase 2 |
 | 57 | Model text reaches stewards only in step summaries, check-run text and artifacts, escaped to ASCII and cut; comments, labels, titles and commit messages stay templated | Phase 2 |
 | 58 | The Reviewer's verdict is computed in code: a verified finding objects, an unverified one is a note; the verdict is a check run, not a gate, in shadow mode | Phase 2 |
+| 59 | Drills are TOML files per suite with the role's inputs and the right outcome; seeded defects from the project's known traps count as fresh, replayed public fixes do not decide | Phase 2 |
+| 60 | Drill checkouts are clones detached at the base with every ref, the remote and unreachable objects removed, one per trial; grading tests from later commits arrive after the Builder is done | Phase 2 |
+| 61 | Scores report pass@1 and pass^k, with the fresh bucket deciding; a committed baseline per suite and a noise threshold make the gate | Phase 2 |

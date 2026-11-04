@@ -22,17 +22,20 @@ templates and the one model call), `config` (`guild.toml`), `agents` (the Agent
 SDK driver with its hooks), `brief` (what the Builder reads), `builder` (the plain
 check on a patch), `planner` and `reviewer` (their schemas, validation and
 prompts). The `guildkit` command line chains them. The triage and build workflow
-templates, the issue forms and the adopting guide exist (`docs/adopting.md`).
-Nothing has run against a live repository yet. Not built: the drill runner, the
-ledger branch tooling, the brakes that need it, the weekly reports, the second
-Builder attempt on an escalated model, and egress filtering of the agent jobs.
+templates, the issue forms and the adopting guide exist (`docs/adopting.md`),
+and so do `drills` (the runner, the graders and the scores) with the first
+drills for confusable under `drills/confusable/` and the `Drills` workflow.
+Nothing has run against a live repository yet, and no drill has run with a
+model. Not built: the ledger branch tooling, the brakes that need it, the weekly
+reports, the second Builder attempt on an escalated model, egress filtering of
+the agent jobs, the rubric grader and the weekly canary.
 
 ## Decisions
 
 | Topic | Decision |
 |---|---|
 | Python | `>=3.13`, for `PurePosixPath.full_match`. The shell runs on CI runners, not on users' machines, so old interpreters do not matter. |
-| Dependencies | `anthropic` for the model API and `confusable`, from git by commit, to find hidden characters. `claude-agent-sdk` in the `agents` extra only, pinned exactly, because its wheel carries the Claude Code CLI and the triage jobs do not need it; `roles.py` holds what `config` and `cli` need without it. GitHub and git are driven by `gh` and `git` in the workflows, not from Python; the one subprocess the shell runs is the adopter's test command, from the Builder's Stop hook. |
+| Dependencies | `anthropic` for the model API and `confusable`, from git by commit, to find hidden characters. `claude-agent-sdk` in the `agents` extra only, pinned exactly, because its wheel carries the Claude Code CLI and the triage jobs do not need it; `roles.py` holds what `config` and `cli` need without it. GitHub and git are driven by `gh` and `git` in the workflows, not from Python, with two exceptions that hold no token: the Builder's Stop hook runs the adopter's test command, and the drill runner prepares its checkouts with `git`. |
 | Installation | From git by commit SHA, never from PyPI. Adopters pin the SHA in their workflows. |
 | Configuration | `guild.toml` in the adopting repository, parsed by `config.py` with plain validation. The plan called it `GUILD.md`; a TOML file is machine-readable and checkable, and the prose lives in the adopter's `CHARTER.md` and `AGENTS.md`. Changing it is tier 2, and it is on the reject list. |
 | Untrusted text | Every string an outsider wrote passes through `text.prepare`: Markdown to plain text, HTML comments and tags dropped, entities decoded, then every character outside printable ASCII, newline and tab written as `U+XXXX`. JSON does not decode that notation, so it survives every hop. Hidden characters are listed with `confusable.find_invisible`. Lengths are capped. |
@@ -42,6 +45,7 @@ Builder attempt on an escalated model, and egress filtering of the agent jobs.
 | Agent roles | The Planner reads the feature form's fields (`planner.request`), the handbook, the charter and the repository, read-only, and returns structured output that `planner.validate_output` checks: a plan with checkable acceptance criteria, a request for clarification, or out of scope. The Builder reads a brief (`brief.from_triage`): the triage record, the bug form's structured fields cut to `FIELD_LIMIT`, or the approved plan; never the issue body, a comment or the web. The Reviewer runs on a fresh runner with the patch applied; `reviewer.prompt` takes five texts and nothing else, and a test plants a canary everywhere else to prove it. Its findings are validated again, and the verdict is computed in code: a verified finding is an objection, an unverified one a note. In shadow mode the Planner and the Builder start on a steward's `/guild plan` or `/guild build`, checked against `guild.toml` and live permissions, not on triage's acceptance. |
 | Patch check | `builder.check_patch` reads the diff the workflow took against the base commit and refuses a patch that touches the reject list, removes a test function, adds a skip or an xfail, or changes a generated file without its generator (`[builder] generated` and `generators`); the rest is tiered by `tiers`. The Builder's own account of its work is not consulted. |
 | Pull requests | The `open` job applies the patch and commits it through GitHub's `createCommitOnBranch` with the Builder App's token, so GitHub signs the commit as the App; `guildkit commit-input` builds the mutation's input. Title, body and commit message come from `templates/pr/` with enumerated placeholders; the message carries an `Assisted-by` trailer naming the model. The pull request is a draft, labelled `guild:<tier>`. The Gate App posts the Reviewer's verdict as the check run `guild/review`. Model text reaches stewards only in step summaries, check-run text and artifacts, escaped to ASCII and cut; comments, labels, titles and commit messages stay templated. |
+| Drills | A drill is a TOML file under `drills/<repository>/<suite>/` (`drills.parse`): the inputs a role gets and the right outcome, with non-ASCII as TOML escapes so the file stays ASCII. Triage drills feed an issue to the triage call and grade the record's enumerations; review drills apply a patch at a base commit and grade the verdict and the file of a verified finding; build drills give the Builder a brief at a base commit, with a seed diff committed on top or a replayed history, and grade the diff with the plain check, the tier and a test command, with grading tests copied from a later commit only after the Builder is done. `drills.prepare_checkout` clones, detaches at the base, deletes every ref and the remote and prunes, so nothing after the base is reachable. Scores (`drills.score`) give pass@1 and pass^k per suite and for the fresh bucket of drills created on or after a cutoff, the candidate model's; `drills.compare` blocks a change only on a drop larger than the noise, and the `Drills` workflow compares with a committed `baseline-<suite>.json` when one exists. Seeded defects count as fresh; replayed public fixes do not decide. Every trial gets a fresh checkout. |
 | Plans | A plan is a run artifact named `plan-<issue number>`, kept 90 days; the build job fetches the latest one for a feature through the Actions API. The issue gets a templated comment pointing at the run. |
 | Credentials | Workload Identity Federation from GitHub Actions, through the SDK's own resolution: `id-token: write`, an identity token file and the federation variables, with no `ANTHROPIC_API_KEY` in the job. The federation rule is pinned to the repository and to `refs/heads/main`. The only hard cost cap is the workspace spend limit in the Console. |
 | Oracle check | The adopter's script, run by the intake job from the base branch with no secrets, writes one of `confirms`, `disagrees`, `not_applicable`, `not_run`, `error` (`docs/adopting.md`). Policy: a bug is accepted only on `confirms`; `disagrees` goes to a steward with the citation; `not_run` and `error` escalate to a steward, because the harness failed, not the reporter; `not_applicable` asks the reporter for a reproducer. |
@@ -78,7 +82,10 @@ CI runs exactly these, so a clean local run means a clean CI run.
 - `src/guildkit/builder.py`: the plain check on the Builder's diff.
 - `src/guildkit/planner.py`: the Planner's request, schema and validation.
 - `src/guildkit/reviewer.py`: the Reviewer's prompt, schema, validation and verdict.
+- `src/guildkit/drills.py`: the drill files, the graders, the stripped
+  checkouts, the runs and the scores.
 - `src/guildkit/cli.py`: the `guildkit` command line, one subcommand per step.
+- `drills/confusable/`: the drills for confusable, by suite, with their diffs.
 - `roles/`: the role prompts, one file per role. ASCII.
 - `templates/guild.toml`: the example configuration, the one the tests load.
 - `templates/comments/`: the comment templates triage posts from.
@@ -90,6 +97,8 @@ CI runs exactly these, so a clean local run means a clean CI run.
   oracle check reads.
 - `docs/plan.md`: the design and its decision log. `docs/adopting.md`: what an
   adopter adds and what stewards set up. `docs/research/`: the research.
+- `.github/workflows/drills.yml`: runs a suite of drills against confusable by
+  hand and scores it, with the model credential this repository holds.
 - `tests/`: pytest and hypothesis. `tests/test_hygiene.py` is the character check.
 
 ## Rules
@@ -125,13 +134,16 @@ CI runs exactly these, so a clean local run means a clean CI run.
 
 Each item is its own pull request, in order:
 
-1. The drill runner and the first drills from confusable's history.
-2. The ledger branch, the weekly report and the kill-switch rehearsal; the brakes
+1. The ledger branch, the weekly report and the kill-switch rehearsal; the brakes
    that need the ledger.
+2. The rubric grader for build drills (maintainer acceptance, as a second judge
+   that may answer unknown) and the weekly canary of a few drills at one trial,
+   with an issue on failure.
 3. The second Builder attempt on an escalated model.
 4. The Releaser.
 
 Done: the shell, the triage workflow template, the issue forms, the adopting
 guide, the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the
 triage workflow and `tools/guild_oracle_check.py`; confusable PR #27), and the
-Planner, Builder and Reviewer on the Agent SDK with the build workflow template.
+Planner, Builder and Reviewer on the Agent SDK with the build workflow template,
+and the drill runner with the first drills (nine triage, two review, one build).
