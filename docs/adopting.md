@@ -11,17 +11,20 @@ adopter pins one commit of it.
 - `guild.toml`: copied from `templates/guild.toml` and edited: the stewards,
   the tier rules, the agents' models, limits and test command (`[planner]`,
   `[builder]`, `[reviewer]`), the Builder's second attempt
-  (`[builder.second_attempt]`, optional), and the prices. Tier 2, and on the
-  reject list.
-- `.github/workflows/guild-triage.yml`, `guild-build.yml`, `guild-batch.yml`
-  and `guild-report.yml`: copied from `templates/workflows/`. Workflows are on
-  the reject list: agents draft them, a steward commits them. The build
-  workflow runs on a steward's `/guild plan` or `/guild build` under an issue,
-  checked against `guild.toml` and the steward's live permission; it installs
-  the shell with its `agents` extra. The batch and report workflows are
-  scheduled: add both to the `scheduled` job of the repository's CI, which
-  fails while a scheduled workflow is disabled, as they open an issue when
-  they fail.
+  (`[builder.second_attempt]`, optional), the release rules (`[release]`:
+  the library paths, the staleness, the version files, the pre-release
+  series), and the prices. Tier 2, and on the reject list.
+- `.github/workflows/guild-triage.yml`, `guild-build.yml`, `guild-batch.yml`,
+  `guild-report.yml` and `guild-release.yml`: copied from
+  `templates/workflows/`. Workflows are on the reject list: agents draft them,
+  a steward commits them. The build workflow runs on a steward's `/guild plan`
+  or `/guild build` under an issue, checked against `guild.toml` and the
+  steward's live permission; it installs the shell with its `agents` extra.
+  The release workflow runs on every push to the default branch (set its
+  branch name) and weekly, and proposes a release as an issue when one is due.
+  The batch, report and release workflows are scheduled: add all three to the
+  `scheduled` job of the repository's CI, which fails while a scheduled
+  workflow is disabled, as they open an issue when they fail.
 - `.github/ISSUE_TEMPLATE/`: copied from `templates/ISSUE_TEMPLATE/`. The bug
   form's fields are what the oracle check reads.
 - `tools/guild_oracle_check.py`: the adopter's oracle check (below). Optional:

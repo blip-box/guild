@@ -119,3 +119,27 @@ def test_build_template_makes_two_attempts_at_most() -> None:
     # The attempt that passed is the one reviewed and opened.
     assert text.count("needs.check.outputs.ok == 'true' && 'build' || 'build-2'") == 2
     assert text.count("needs.check.outputs.ok == 'true' && 'check' || 'check-2'") == 1
+
+
+def test_release_templates_use_known_placeholders_only() -> None:
+    known = {
+        "version",
+        "previous",
+        "head",
+        "reason",
+        "changelog",
+        "credits",
+        "earliest",
+        "tests",
+        "version_files",
+        "run_url",
+    }
+    paths = sorted((ROOT / "templates" / "release").glob("*.md"))
+    assert [p.name for p in paths] == ["proposal.md", "title.md"]
+    for path in paths:
+        text = path.read_text(encoding="ascii")
+        used = set(re.findall(r"\{([a-z_]+)\}", text))
+        assert used <= known, f"{path.name}: {used - known}"
+    body = (ROOT / "templates" / "release" / "proposal.md").read_text(encoding="ascii")
+    assert "no model wrote any of it" in body
+    assert body.rstrip().endswith("Decision record: {run_url}")
