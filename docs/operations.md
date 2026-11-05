@@ -1,8 +1,8 @@
 # Operating Guild
 
 What stewards do while Guild runs: the kill switch and its rehearsal, the
-brakes, the ledger and its weekly report. `docs/adopting.md` says what to set
-up once; this says what to do on a Tuesday.
+brakes, the ledger and its weekly report, and the canary. `docs/adopting.md`
+says what to set up once; this says what to do on a Tuesday.
 
 ## The kill switch
 
@@ -70,3 +70,22 @@ git show origin/guild-ledger:ledger.jsonl | jq -r 'select(.role == "builder") | 
 
 Nothing in the ledger is model text. If a line ever looks like prose, the
 validator was bypassed: treat it as an incident.
+
+## The canary
+
+Every Tuesday the `Canary` workflow on `blip-box/guild` runs five drills at
+one trial: three triage drills, the seeded review drill and the seeded build
+drill, against the pinned models, SDK, CLI and role prompts. When any fails
+it opens the issue "The weekly canary is failing", or comments on it while
+it stays open, and comments once more when a run passes again. The step
+summary of each suite names the drills that failed; the run's artifacts hold
+the trials with their reasons and the transcripts.
+
+What to check, in order: the model credential on `blip-box/guild` (until it
+is set, every run fails this way); a retired or renamed model in the
+adopter's `guild.toml`; a Claude Agent SDK or Claude Code change behind the
+pinned version; a base commit the adopter rewrote; then the role prompts. A
+drill that fails for a reason of its own is a bug in Guild: fix the drill or
+the shell in a pull request and dispatch the canary by hand to confirm.
+Close the issue when it passes. `GUILD_PAUSED` on `blip-box/guild` pauses
+the canary; CI fails while GitHub has disabled the workflow.

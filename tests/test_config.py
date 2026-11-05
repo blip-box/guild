@@ -65,7 +65,7 @@ def test_not_toml() -> None:
 
 def test_example_config_has_the_agents(example_config: Path) -> None:
     cfg = config.load(example_config)
-    assert set(cfg["agents"]) == {"planner", "builder", "reviewer"}
+    assert set(cfg["agents"]) == {"planner", "builder", "reviewer", "grader"}
     assert cfg["agents"]["builder"]["cap_usd"] == 4.0
     assert cfg["agents"]["builder"]["effort"] == "high"
     assert cfg["build"]["test_command"].startswith("uv run --no-sync pytest")
@@ -102,3 +102,34 @@ def test_agent_sections_are_validated(
 ) -> None:
     with pytest.raises(config.ConfigError, match=re.escape(message)):
         config.parse(_with(example_config, old, new))
+
+
+def test_grader_takes_the_reviewer_settings_unless_set(example_config: Path) -> None:
+    text = example_config.read_text(encoding="utf-8")
+    cfg = config.parse(text)
+    assert "\n[grader]\n" not in text
+    assert cfg["agents"]["grader"] == cfg["agents"]["reviewer"]
+    assert cfg["agents"]["grader"] is not cfg["agents"]["reviewer"]
+    own = text + (
+        '\n[grader]\nmodel = "claude-haiku-5-5"\nmax_turns = 10\n'
+        'cap_usd = 0.5\neffort = "low"\n'
+    )
+    cfg = config.parse(own)
+    assert cfg["agents"]["grader"] == {
+        "model": "claude-haiku-5-5",
+        "max_turns": 10,
+        "cap_usd": 0.5,
+        "effort": "low",
+    }
+    assert cfg["agents"]["reviewer"]["model"] == "claude-opus-5-5"
+    with pytest.raises(
+        config.ConfigError, match=re.escape("no prices for grader.model")
+    ):
+        config.parse(
+            own.replace(
+                'model = "claude-haiku-5-5"\nmax_turns = 10',
+                'model = "x-9"\nmax_turns = 10',
+            )
+        )
+    with pytest.raises(config.ConfigError, match=re.escape("grader.effort")):
+        config.parse(own.replace('effort = "low"', 'effort = "most"'))

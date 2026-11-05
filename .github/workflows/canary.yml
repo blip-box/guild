@@ -1,0 +1,136 @@
+# Weekly: a few drills at one trial against the pinned models, SDK, CLI and
+# role prompts, so drift between deliberate changes (a model retired, an API
+# or CLI change, a prompt that stopped working, an adopter commit that moved)
+# is noticed within a week. A failed run opens or comments on an issue, and
+# CI fails while this workflow is disabled, so it cannot stop working
+# unnoticed.
+#
+# Needs the model credential as the Drills workflow does. Until the
+# credential is set, every run fails and the issue says so; set the variable
+# GUILD_PAUSED to true to pause it.
+name: Canary
+
+on:
+  schedule:
+    - cron: "41 5 * * 2" # Tuesdays, 05:41 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: ${{ matrix.suite }}
+    if: vars.GUILD_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read # this repository and the public adopter
+      id-token: write # workload identity federation for the model credential
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Three cheap triage drills, the seeded review drill and the seeded
+          # build drill: five drills, one trial each, as docs/plan.md says.
+          - suite: triage
+            drills: bug-confirmed-paypal injection-in-a-bug-report spam
+          - suite: review
+            drills: seeded-bidi-fast-path
+          - suite: build
+            drills: seeded-bidi-fast-path
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/confusable
+          path: source
+          fetch-depth: 0 # the drills name base commits in the history
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - run: uv sync --locked --no-default-groups --extra agents
+      - name: Identity token
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Run
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          SUITE: ${{ matrix.suite }}
+          DRILLS: ${{ matrix.drills }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          mkdir -p "$RUNNER_TEMP/work" "$RUNNER_TEMP/out"
+          read -ra names <<< "$DRILLS"
+          only=()
+          for name in "${names[@]}"; do only+=(--only "$name"); done
+          status=0
+          uv run --no-sync guildkit drill-run \
+            --dir drills/confusable \
+            --suite "$SUITE" \
+            --config source/guild.toml \
+            --roles roles \
+            --trials 1 \
+            --source "$PWD/source" \
+            --work "$RUNNER_TEMP/work" \
+            --out "$RUNNER_TEMP/out/trials.jsonl" \
+            "${only[@]}" > "$RUNNER_TEMP/out/run.log" || status=$?
+          # The lines are the runner's own: drill names and pass or FAIL.
+          {
+            echo "## Canary: $SUITE"
+            echo
+            sed 's/^/- /' "$RUNNER_TEMP/out/run.log"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: canary-${{ matrix.suite }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/out/trials.jsonl
+            ${{ runner.temp }}/out/run.log
+            ${{ runner.temp }}/work/*.transcript.jsonl
+          retention-days: 90
+
+  report:
+    name: report
+    needs: [canary]
+    if: always() && needs.canary.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write # open the failure issue, or comment on it
+    steps:
+      - name: Open or comment on the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.canary.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="The weekly canary is failing"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ "$RESULT" = "success" ]; then
+            [ -z "$number" ] || gh issue comment "$number" --body "It passed: $RUN_URL"
+          elif [ -n "$number" ]; then
+            gh issue comment "$number" --body "It failed again: $RUN_URL"
+          else
+            {
+              printf 'The weekly canary failed: %s\n\n' "$RUN_URL"
+              printf 'The step summary of each suite names the drills that failed; the artifacts hold the trials with their reasons and the transcripts. '
+              printf 'Until it passes, a change to a pinned model, the Agent SDK, a role prompt or the adopter may be breaking Guild unnoticed. docs/operations.md says what to check.\n'
+            } > body.md
+            gh issue create --title "$title" --body-file body.md
+          fi

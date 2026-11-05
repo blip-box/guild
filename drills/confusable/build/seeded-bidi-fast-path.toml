@@ -12,7 +12,7 @@ repo = "blip-box/confusable"
 # reordering Latin letters. The fix is one set in _odd_level(); the Builder
 # must find it without weakening the conformance tests that fail meanwhile.
 [input]
-base = "31dd957a7b98ab24015a077f1543eb931d088f4b"
+base = "31dd957a7b98ab24015a077f1543eb931d188f4b"
 seed = "seeded-bidi-fast-path.diff"
 setup = "uv sync --locked"
 
@@ -38,3 +38,21 @@ timeout = 900
 tier = "T1"
 must_change = ["src/confusable/_skeleton.py"]
 must_not_change = ["tests/conformance/fixtures/strings.txt"]
+
+# What a maintainer checks before accepting the fix, beyond the tests. The
+# grader answers each criterion met, not_met or unknown; only not_met fails.
+[[rubric]]
+id = "fast-path-classes"
+criterion = "The left-to-right shortcut in skeleton() is kept, and the classes it tests for (_odd_level in src/confusable/_skeleton.py) are exactly those that can reach an odd embedding level in a left-to-right paragraph: R, AL, AN, RLE, RLO and RLI."
+
+[[rubric]]
+id = "departure-explained"
+criterion = "A comment next to the shortcut says that UTS #39 states it with R and AL only and why that is not enough, as the handbook asks for every place the library departs from the specification."
+
+[[rubric]]
+id = "pinned-by-test"
+criterion = "A test pins the behaviour with text that has no R or AL character but has an AN, RLE, RLO or RLI character, such as U+202E, and asserts that the skeleton or the display order differs from the text as written; it is not skipped or marked xfail."
+
+[[rubric]]
+id = "nothing-else"
+criterion = "Beyond the shortcut, its comment and the test, the patch changes nothing: no refactoring, no change to the bidirectional algorithm in src/confusable/_bidi.py, the generated tables or the conformance fixtures."

@@ -52,6 +52,7 @@ TOOLS: dict[Role, list[str]] = {
     "planner": ["Read", "Glob", "Grep"],
     "builder": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
     "reviewer": ["Read", "Glob", "Grep", "Bash"],
+    "grader": ["Read", "Glob", "Grep", "Bash"],
 }
 WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 READ_TOOLS = ("Read", "Glob", "Grep")

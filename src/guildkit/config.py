@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from guildkit.builder import BuildRules
-from guildkit.roles import EFFORTS, ROLES, Role
+from guildkit.roles import EFFORTS, GRADER, ROLES, Role
 from guildkit.tiers import PathRules, ShapeRules, Tier
 from guildkit.triage import Prices
 
@@ -148,7 +148,11 @@ def parse(text: str) -> Config:
         raise ConfigError("triage.model: not a model ID")
 
     agents: dict[Role, AgentConfig] = {}
-    for role in ROLES:
+    for role in (*ROLES, GRADER):
+        if role == GRADER and role not in data:
+            # The drills' second judge; the Reviewer's settings unless set.
+            agents[role] = agents["reviewer"].copy()
+            continue
         table = _table(data.get(role), role)
         agents[role] = {
             "model": _get(table, "model", str, role),

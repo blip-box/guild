@@ -1,6 +1,7 @@
 """The drill runner: files, graders, stripped checkouts, runs with fakes, scores."""
 
 import json
+import re
 import subprocess
 import sys
 from collections.abc import AsyncIterator
@@ -10,7 +11,7 @@ from typing import Any
 import pytest
 from claude_agent_sdk import ResultMessage
 
-from guildkit import cli, config, drills, triage
+from guildkit import cli, config, drills, grader, triage
 
 ROOT = Path(__file__).resolve().parents[1]
 DRILLS = ROOT / "drills" / "confusable"
@@ -63,6 +64,16 @@ def test_the_shipped_drills_load() -> None:
         for drill in drills.load(DRILLS, suite):
             assert drill["repo"] == "blip-box/confusable"
             assert drill["created"] >= "2026-11-03"
+    build = drills.load(DRILLS, "build")[0]
+    assert [c["id"] for c in build["rubric"]] == [
+        "fast-path-classes",
+        "departure-explained",
+        "pinned-by-test",
+        "nothing-else",
+    ]
+    # The seeded drills share their base commit, the one the seed applies to.
+    review = {d["name"]: d for d in drills.load(DRILLS, "review")}
+    assert review["seeded-bidi-fast-path"]["input"]["base"] == build["input"]["base"]
 
 
 def test_shipped_diffs_keep_their_context_lines() -> None:
@@ -117,22 +128,22 @@ def test_injection_drill_carries_hidden_characters() -> None:
         ),
         (
             "review",
-            "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='x'\npatch='missing.diff'\n[input.brief]\nkind='bug'\nclause='c'\nseverity='low'\nfields={}\n[expect]\nverdict='objections'\n",
+            "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='0000000000000000000000000000000000000000'\npatch='missing.diff'\n[input.brief]\nkind='bug'\nclause='c'\nseverity='low'\nfields={}\n[expect]\nverdict='objections'\n",
             "no file",
         ),
         (
             "review",
-            "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='x'\npatch='missing.diff'\n[input.brief]\nkind='bug'\nclause='c'\nseverity='low'\nfields={}\n[expect]\nverdict='fine'\n",
+            "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='0000000000000000000000000000000000000000'\npatch='missing.diff'\n[input.brief]\nkind='bug'\nclause='c'\nseverity='low'\nfields={}\n[expect]\nverdict='fine'\n",
             "verdict",
         ),
         (
             "build",
-            "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='x'\n[input.brief]\nkind='bug'\nclause='c'\nseverity='low'\nfields={}\n[expect]\n",
+            "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='0000000000000000000000000000000000000000'\n[input.brief]\nkind='bug'\nclause='c'\nseverity='low'\nfields={}\n[expect]\n",
             "grade: missing",
         ),
         (
             "build",
-            "[drill]\nsuite='triage'\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='x'\n[input.brief]\nkind='bug'\nclause='c'\nseverity='low'\nfields={}\n[grade]\ncommand='true'\n[expect]\n",
+            "[drill]\nsuite='triage'\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='0000000000000000000000000000000000000000'\n[input.brief]\nkind='bug'\nclause='c'\nseverity='low'\nfields={}\n[grade]\ncommand='true'\n[expect]\n",
             "drill.suite",
         ),
     ],
@@ -506,6 +517,7 @@ def trial(
         "trial": n,
         "passed": passed,
         "reasons": [] if passed else ["x"],
+        "unknown": [],
         "model": "m",
         "cost_usd": cost,
         "turns": 1,
@@ -533,6 +545,7 @@ def test_score_and_compare() -> None:
         "passes": 2,
         "pass_rate": 0.6667,
         "pass_k": False,
+        "undecided": 0,
         "cost_usd": 0.3,
     }
     assert s["pass_at_1"] == round((1 + 0.6667 + 1) / 3, 4)
@@ -662,3 +675,272 @@ def test_cli_drill_commands(
         )
         == 2
     )
+
+
+def test_parse_checks_hashes_and_rubrics(tmp_path: Path) -> None:
+    (tmp_path / "p.diff").write_text("", encoding="ascii")
+    head = "[drill]\nname='x'\ncreated='2026-11-03'\nrepo='o/r'\n"
+    brief = (
+        "[input.brief]\nkind='bug'\nclause='C-A-1'\nseverity='low'\n"
+        "[input.brief.fields]\n"
+    )
+    full = "0" * 40
+    with pytest.raises(
+        drills.DrillError, match=re.escape("input.base: expected a full commit")
+    ):
+        drills.parse(
+            head
+            + "[input]\nbase='abc123'\npatch='p.diff'\n"
+            + brief
+            + "[expect]\nverdict='objections'\n",
+            suite="review",
+            directory=tmp_path,
+        )
+    with pytest.raises(
+        drills.DrillError, match=re.escape("grade.tests_from: expected a full")
+    ):
+        drills.parse(
+            head
+            + f"[input]\nbase='{full}'\n"
+            + brief
+            + "[grade]\ncommand='true'\ntests_from='HEAD'\n[expect]\n",
+            suite="build",
+            directory=tmp_path,
+        )
+    build = (
+        head
+        + f"[input]\nbase='{full}'\n"
+        + brief
+        + "[grade]\ncommand='true'\n[expect]\n"
+    )
+    assert drills.parse(build, suite="build", directory=tmp_path)["rubric"] == []
+    with pytest.raises(drills.DrillError, match=re.escape("rubric.id: a twice")):
+        drills.parse(
+            build
+            + "[[rubric]]\nid='a'\ncriterion='x'\n[[rubric]]\nid='a'\ncriterion='y'\n",
+            suite="build",
+            directory=tmp_path,
+        )
+    with pytest.raises(drills.DrillError, match=re.escape("rubric.id: 'A B'")):
+        drills.parse(
+            build + "[[rubric]]\nid='A B'\ncriterion='x'\n",
+            suite="build",
+            directory=tmp_path,
+        )
+    with pytest.raises(drills.DrillError, match="rubric: build drills only"):
+        drills.parse(
+            head
+            + "[input]\ntitle='t'\nbody='b'\noracle='not_run'\n[expect]\nkind='bug'\n"
+            "actionable=true\ntemplate='bug_accepted'\n[[rubric]]\nid='a'\ncriterion='x'\n",
+            suite="triage",
+            directory=tmp_path,
+        )
+
+
+def judged_runner(
+    builder_messages: list[Any], grader_messages: list[Any], act: Any = None
+) -> tuple[Any, dict[str, Any]]:
+    """A runner that answers the Builder, then the grader, told apart by the schema."""
+    seen: dict[str, Any] = {"calls": []}
+
+    async def runner(*, prompt: str, options: Any) -> AsyncIterator[Any]:
+        if options.output_format is None:
+            seen["calls"].append("builder")
+            if act is not None:
+                act(Path(options.cwd), prompt)
+            for message in builder_messages:
+                yield message
+        else:
+            seen["calls"].append("grader")
+            seen["grader_prompt"] = prompt
+            seen["grader_options"] = options
+            for message in grader_messages:
+                yield message
+
+    return runner, seen
+
+
+def build_drill_with_rubric(base: str, fix: str, tmp_path: Path) -> drills.Drill:
+    seed = tmp_path / "seed.diff"
+    seed.write_text(
+        "diff --git a/src/x.py b/src/x.py\n--- a/src/x.py\n+++ b/src/x.py\n"
+        "@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 0\n",
+        encoding="ascii",
+    )
+    check_fix = (
+        "import sys; sys.exit(0 if open('src/x.py').read()"
+        ".endswith('return 2\\n') else 1)"
+    )
+    grade = f'{sys.executable} -c "{check_fix}"'
+    return drills.parse(
+        f"[drill]\nname='b'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='{base}'\n"
+        "seed='seed.diff'\n[input.brief]\nkind='bug'\nclause='C-SCOPE-1'\nseverity='low'\n"
+        "[input.brief.fields]\n'Code points'='U+0041'\n"
+        f"[grade]\ncommand='''{grade}'''\ntests_from='{fix}'\ntest_paths=['tests/test_future.py']\n"
+        "[expect]\ntier='T1'\nmust_change=['src/x.py']\n"
+        "[[rubric]]\nid='fast'\ncriterion='The fix is in f().'\n"
+        "[[rubric]]\nid='test'\ncriterion='A test pins it.'\n",
+        suite="build",
+        directory=tmp_path,
+    )
+
+
+def answers(**by_id: str) -> dict[str, Any]:
+    return {
+        "answers": [
+            {"id": name, "answer": answer, "evidence": f"{name}: seen"}
+            for name, answer in by_id.items()
+        ]
+    }
+
+
+def fix_x(cwd: Path, prompt: str) -> None:
+    (cwd / "src" / "x.py").write_text("def f():\n    return 2\n", encoding="ascii")
+
+
+def test_run_build_with_a_rubric(
+    source: tuple[Path, str, str], tmp_path: Path, test_config: Path
+) -> None:
+    repo, base, fix = source
+    cfg = config.load(test_config)
+    drill = build_drill_with_rubric(base, fix, tmp_path)
+
+    def run(n: int, grader_messages: list[Any], act: Any = fix_x) -> tuple[Any, Any]:
+        runner, seen = judged_runner([result()], grader_messages, act)
+        trial = drills.run_build(
+            drill,
+            n,
+            cfg=cfg,
+            source=repo,
+            work=tmp_path / f"w{n}",
+            role="ROLE",
+            runner=runner,
+            grader_role="GRADER",
+            grader_transcript=tmp_path / f"g{n}.jsonl",
+        )
+        return trial, seen
+
+    trial, seen = run(1, [result(structured_output=answers(fast="met", test="met"))])
+    assert trial["passed"] is True, trial["reasons"]
+    assert trial["unknown"] == []
+    assert seen["calls"] == ["builder", "grader"]
+    assert trial["cost_usd"] == 0.006  # both runs, at the Reviewer's model
+    assert (tmp_path / "g1.jsonl").exists()
+    options = seen["grader_options"]
+    assert options.tools == ["Read", "Glob", "Grep", "Bash"]
+    assert options.output_format["schema"] is grader.OUTPUT_SCHEMA
+    assert options.system_prompt.startswith("GRADER\n\n# The handbook")
+    prompt = seen["grader_prompt"]
+    assert "- fast: The fix is in f()." in prompt
+    assert "+    return 2" in prompt
+    assert "Code points: U+0041" in prompt
+    # The grading tests are in the checkout the grader reads.
+    assert (tmp_path / "w1" / "tests" / "test_future.py").exists()
+
+    trial, _ = run(2, [result(structured_output=answers(fast="met", test="not_met"))])
+    assert trial["passed"] is False
+    assert trial["reasons"] == ["rubric: test not met"]
+
+    trial, _ = run(3, [result(structured_output=answers(fast="unknown", test="met"))])
+    assert trial["passed"] is True
+    assert trial["unknown"] == ["fast"]
+
+    trial, _ = run(4, [result(structured_output=answers(fast="met", other="met"))])
+    assert trial["reasons"] == [
+        "grader output: answers: expected one for each of ['fast', 'test']"
+    ]
+
+    trial, _ = run(5, [result(subtype="error_max_turns", is_error=True)])
+    assert trial["reasons"] == ["grader run: error_max_turns"]
+
+    def leave_it(cwd: Path, prompt: str) -> None: ...
+
+    trial, seen = run(
+        6, [result(structured_output=answers(fast="met", test="met"))], leave_it
+    )
+    assert trial["passed"] is False
+    assert "not changed: src/x.py" in trial["reasons"]
+    assert seen["calls"] == ["builder"], "the grader runs only when the tests pass"
+
+    runner, _ = judged_runner([result()], [], fix_x)
+    with pytest.raises(drills.DrillError, match="has a rubric but no grader"):
+        drills.run_build(
+            drill,
+            7,
+            cfg=cfg,
+            source=repo,
+            work=tmp_path / "w7",
+            role="ROLE",
+            runner=runner,
+        )
+
+
+def test_score_counts_undecided_trials() -> None:
+    decided = trial("a", 1, True)
+    undecided = trial("a", 2, True)
+    undecided["unknown"] = ["fast"]
+    score = drills.score([decided, undecided], suite="triage", cutoff="2026-01-01")
+    assert score["drills"][0]["undecided"] == 1
+    assert score["drills"][0]["pass_k"] is True
+    assert "- a (2026-11-03): pass^k, 1 undecided, 0.2 USD" in drills.markdown(score)
+
+
+def test_cli_build_drill_runs_the_grader(
+    source: tuple[Path, str, str],
+    tmp_path: Path,
+    test_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, base, fix = source
+    build_drill_with_rubric(base, fix, tmp_path)  # writes the seed
+    directory = tmp_path / "drills" / "build"
+    directory.mkdir(parents=True)
+    # The drill file, next to its seed; the rubric makes the grader run.
+    text = (
+        f"[drill]\nname='b'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\nbase='{base}'\n"
+        "seed='seed.diff'\n[input.brief]\nkind='bug'\nclause='C-SCOPE-1'\nseverity='low'\n"
+        "[input.brief.fields]\n'Code points'='U+0041'\n"
+        f"[grade]\ncommand='true'\n[expect]\n"
+        "[[rubric]]\nid='fast'\ncriterion='The fix is in f().'\n"
+    )
+    (directory / "b.toml").write_text(text, encoding="ascii")
+    (directory / "seed.diff").write_text(
+        (tmp_path / "seed.diff").read_text(encoding="ascii"), encoding="ascii"
+    )
+    runner, seen = judged_runner(
+        [result()], [result(structured_output=answers(fast="unknown"))], fix_x
+    )
+    monkeypatch.setattr(cli, "RUNNER", runner)
+    results = tmp_path / "results.jsonl"
+    code = cli.main(
+        [
+            "drill-run",
+            "--dir",
+            str(tmp_path / "drills"),
+            "--suite",
+            "build",
+            "--config",
+            str(test_config),
+            "--roles",
+            str(ROOT / "roles"),
+            "--trials",
+            "1",
+            "--source",
+            str(repo),
+            "--work",
+            str(tmp_path / "work"),
+            "--out",
+            str(results),
+        ]
+    )
+    assert code == 0, capsys.readouterr()
+    assert "build b trial 1: pass" in capsys.readouterr().out
+    assert seen["calls"] == ["builder", "grader"]
+    assert seen["grader_options"].system_prompt.startswith(
+        "You are the Grader of Guild"
+    )
+    (trial_record,) = drills.read_trials(results)
+    assert trial_record["unknown"] == ["fast"]
+    assert (tmp_path / "work" / "b-1.transcript.jsonl").exists()
+    assert (tmp_path / "work" / "b-1.grader.transcript.jsonl").exists()

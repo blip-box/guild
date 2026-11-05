@@ -1,4 +1,5 @@
-# Lint and test on every pull request and on pushes to main.
+# Lint and test on every pull request and on pushes to main, and fail while
+# a scheduled workflow is disabled.
 # Branch protection on main requires only the "required" job, so the matrix
 # can change without editing repository settings.
 name: CI
@@ -53,10 +54,29 @@ jobs:
       - run: uv sync --locked --no-default-groups --group test
       - run: uv run --no-sync pytest
 
+  scheduled:
+    name: scheduled
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # read the state of the scheduled workflows
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for name in canary.yml; do
+            state=$(gh api "repos/$GH_REPO/actions/workflows" --jq ".workflows[] | select(.path == \".github/workflows/$name\") | .state")
+            # Empty until the workflow first reaches the default branch.
+            if [ -n "$state" ] && [ "$state" != "active" ]; then
+              echo "::error::$name is $state. Re-enable it: gh workflow enable $name"
+              exit 1
+            fi
+          done
+
   required:
     name: required
     if: always()
-    needs: [lint, test]
+    needs: [lint, test, scheduled]
     runs-on: ubuntu-latest
     permissions: {}
     steps:

@@ -83,6 +83,9 @@ model = "claude-opus-5-5"
 max_turns = 40
 cap_usd = 2.00
 effort = "high"
+# The drills' rubric grader, the second judge of a build drill's patch, runs
+# with the Reviewer's settings. An optional [grader] table with the same keys
+# overrides them.
 
 # US dollars per million tokens, Anthropic API list prices, for the ledger.
 # Partner platforms price differently: add their IDs with their prices.

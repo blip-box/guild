@@ -5,9 +5,10 @@ a role would get and what the right outcome is. Triage drills feed an issue
 to the triage call and grade the record. Review drills apply a patch to a
 checkout and grade the verdict. Build drills give the Builder a brief in a
 checkout, with a seeded defect or a replayed base commit, and grade the
-patch with the plain check and the tests. Every checkout is prepared from a
-clone with the later history, tags and remotes stripped, so no run can read
-the answer from git.
+patch with the plain check and the tests, then with the drill's rubric when
+it has one: a second judge (`grader`) that may answer unknown. Every
+checkout is prepared from a clone with the later history, tags and remotes
+stripped, so no run can read the answer from git.
 
 Scores follow the research in docs/research/notes/evals_governance_cost.md:
 several trials per drill, pass^k beside pass@1, a fresh bucket of drills
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shlex
 import subprocess
 import tomllib
@@ -26,7 +28,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, TypedDict
 
-from guildkit import brief, builder, reviewer, snapshot, triage
+from guildkit import brief, builder, grader, reviewer, snapshot, triage
 from guildkit.config import Config
 from guildkit.roles import Role
 from guildkit.triage import cost_usd
@@ -35,6 +37,9 @@ SUITES = ("triage", "review", "build")
 # What `git` runs as inside a prepared checkout. No real identity, no token.
 _GIT_IDENTITY = ("-c", "user.name=Guild drill", "-c", "user.email=drill@guild.invalid")
 _DATE = "YYYY-MM-DD"
+# Base commits are written in full: a short or mistyped hash fails here, not
+# in a checkout after the clone.
+_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 class Drill(TypedDict):
@@ -48,10 +53,15 @@ class Drill(TypedDict):
     input: dict[str, Any]
     expect: dict[str, Any]
     grade: dict[str, Any]
+    rubric: list[grader.Criterion]
 
 
 class Trial(TypedDict):
-    """One run of one drill. Numbers and enumerations; the reasons are code's."""
+    """One run of one drill. Numbers and enumerations; the reasons are code's.
+
+    `unknown` names the rubric criteria the grader could not decide; the
+    trial passes with them, and the score counts it as undecided.
+    """
 
     suite: str
     drill: str
@@ -59,6 +69,7 @@ class Trial(TypedDict):
     trial: int
     passed: bool
     reasons: list[str]
+    unknown: list[str]
     model: str
     cost_usd: float
     turns: int
@@ -84,6 +95,11 @@ def _date(value: Any, where: str) -> str:
     ):
         raise DrillError(f"{where}: created must be {_DATE}")
     return value
+
+
+def _sha(table: dict[str, Any], key: str, where: str) -> None:
+    if key in table and not (isinstance(table[key], str) and _SHA.match(table[key])):
+        raise DrillError(f"{where}.{key}: expected a full commit hash")
 
 
 def parse(text: str, *, suite: str, directory: Path) -> Drill:
@@ -120,12 +136,21 @@ def parse(text: str, *, suite: str, directory: Path) -> Drill:
         _require(expect, ("kind", "actionable", "template"), "expect")
     elif suite == "review":
         _require(inp, ("base", "patch", "brief"), "input")
+        _sha(inp, "base", "input")
         _require(expect, ("verdict",), "expect")
         if expect["verdict"] not in reviewer.VERDICTS:
             raise DrillError("expect.verdict: not a verdict")
     else:
         _require(inp, ("base", "brief"), "input")
+        _sha(inp, "base", "input")
         _require(grade, ("command",), "grade")
+        _sha(grade, "tests_from", "grade")
+    if "rubric" in data and suite != "build":
+        raise DrillError("rubric: build drills only")
+    try:
+        criteria = grader.rubric(data.get("rubric", []))
+    except grader.GradeError as error:
+        raise DrillError(str(error)) from error
     if "brief" in inp:
         _require(inp["brief"], ("kind", "clause", "severity", "fields"), "input.brief")
     for key in ("patch", "seed"):
@@ -140,6 +165,7 @@ def parse(text: str, *, suite: str, directory: Path) -> Drill:
         "input": inp,
         "expect": expect,
         "grade": grade,
+        "rubric": criteria,
     }
 
 
@@ -309,6 +335,7 @@ def _trial(
     cost: float,
     turns: int,
     duration_ms: int,
+    unknown: list[str] | None = None,
 ) -> Trial:
     return {
         "suite": drill["suite"],
@@ -317,6 +344,7 @@ def _trial(
         "trial": trial,
         "passed": not reasons,
         "reasons": reasons,
+        "unknown": unknown or [],
         "model": model,
         "cost_usd": cost,
         "turns": turns,
@@ -492,8 +520,14 @@ def run_build(
     role: str,
     transcript: Path | None = None,
     runner: Any = None,
+    grader_role: str | None = None,
+    grader_transcript: Path | None = None,
 ) -> Trial:
-    """Prepare the checkout, seed it, run the Builder, check and grade its diff."""
+    """Prepare the checkout, seed it, run the Builder, check and grade its diff.
+
+    When the drill has a rubric and the tests passed, the grader runs in
+    the same checkout as the second judge; its cost is added to the trial's.
+    """
     from guildkit import agents
 
     inp = drill["input"]
@@ -544,14 +578,53 @@ def run_build(
         target.write_text(content, encoding="utf-8")
     grade_exit = _command(grade["command"], work, int(grade.get("timeout", 900)))
     reasons = grade_build(check, _run_ok(record), grade_exit, drill["expect"])
+    cost = record["cost_usd"]
+    unknown: list[str] = []
+    if drill["rubric"] and not reasons:
+        if grader_role is None:
+            raise DrillError(f"{drill['name']}: the drill has a rubric but no grader")
+        system, user = grader.prompt(
+            role=grader_role,
+            handbook=handbook,
+            charter=charter,
+            brief=brief.render(_drill_brief(drill)),
+            criteria=drill["rubric"],
+            diff=diff,
+        )
+        judge = _agent(
+            cfg=cfg,
+            role_name="grader",
+            root=work,
+            system=system,
+            user=user,
+            output_format={"type": "json_schema", "schema": grader.OUTPUT_SCHEMA},
+            tests=None,
+            transcript=grader_transcript,
+            runner=runner,
+        )
+        cost += judge["cost_usd"]
+        if _run_ok(judge):
+            try:
+                answers = grader.validate_output(
+                    judge["structured_output"], drill["rubric"]
+                )
+            except grader.GradeError as error:
+                reasons.append(f"grader output: {error}")
+            else:
+                result = grader.grade(answers)
+                reasons.extend(f"rubric: {name} not met" for name in result["not_met"])
+                unknown = result["unknown"]
+        else:
+            reasons.append(f"grader run: {judge['subtype']}")
     return _trial(
         drill,
         trial,
         reasons,
         model=record["model"],
-        cost=record["cost_usd"],
+        cost=round(cost, 6),
         turns=record["num_turns"],
         duration_ms=record["duration_ms"],
+        unknown=unknown,
     )
 
 
@@ -568,6 +641,7 @@ class DrillScore(TypedDict):
     passes: int
     pass_rate: float
     pass_k: bool
+    undecided: int
     cost_usd: float
 
 
@@ -588,8 +662,9 @@ def score(trials: Iterable[Trial], *, suite: str, cutoff: str) -> Score:
     """Summarise the trials of one suite.
 
     `pass_at_1` is the mean pass rate; `pass_k` the share of drills every
-    trial passed; the fresh bucket holds the drills created on or after the
-    cutoff, the candidate model's training cutoff.
+    trial passed; `undecided` the trials the grader left a criterion unknown
+    on; the fresh bucket holds the drills created on or after the cutoff,
+    the candidate model's training cutoff.
     """
     by_drill: dict[str, list[Trial]] = {}
     for trial in trials:
@@ -607,6 +682,7 @@ def score(trials: Iterable[Trial], *, suite: str, cutoff: str) -> Score:
                 "passes": passes,
                 "pass_rate": round(passes / len(runs), 4),
                 "pass_k": passes == len(runs),
+                "undecided": sum(1 for r in runs if r.get("unknown")),
                 "cost_usd": round(sum(r["cost_usd"] for r in runs), 6),
             }
         )
@@ -687,5 +763,7 @@ def markdown(result: Score) -> str:
     ]
     for d in result["drills"]:
         state = "pass^k" if d["pass_k"] else f"{d['passes']}/{d['trials']}"
+        if d["undecided"]:
+            state += f", {d['undecided']} undecided"
         lines.append(f"- {d['drill']} ({d['created']}): {state}, {d['cost_usd']} USD")
     return "\n".join(lines) + "\n"
