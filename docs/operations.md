@@ -52,7 +52,9 @@ limit, queues the issue: the label `guild:queued`, a templated comment, and a
 Guild batch workflow re-reads queued issues twice a day by dispatching the
 triage workflow for each; the brakes apply again, so a backlog drains at the
 day's limit. A steward can dispatch the triage workflow for one issue at any
-time.
+time. A build spends at most the Builder's cap, and twice that when
+`guild.toml` has a second attempt and the first fails the plain check; the
+second attempt's own cap applies to it.
 
 ## The ledger
 

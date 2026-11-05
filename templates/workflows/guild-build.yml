@@ -12,6 +12,10 @@
 #   plan     the model credential. The Planner, read-only, structured output.
 #   build    the model credential. The Builder, in a checkout of the base.
 #   check    no secrets. The diff, the plain check, the tier.
+#   build-2  the same again, only when the check refused the first attempt
+#   check-2  and guild.toml has [builder.second_attempt]: a fresh checkout
+#            at the same base, the escalated setting, the check's reasons
+#            after the brief. Two attempts at most; then a steward.
 #   review   the model credential. The Reviewer, fresh runner, patch applied.
 #   open     the Builder App and the Gate App. Signed commit, draft pull
 #            request, check run; the Triage App posts the templated comment.
@@ -23,8 +27,7 @@
 # Every run ends with the ledger job, which appends the entries of the jobs
 # that ran through the Builder App's token.
 #
-# Not yet: the second Builder attempt on an escalated model, egress
-# filtering of the agent jobs (no first-party mechanism).
+# Not yet: egress filtering of the agent jobs (no first-party mechanism).
 name: Guild build
 
 on:
@@ -448,6 +451,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # check out the pinned shell
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
+      escalate: ${{ steps.check.outputs.escalate }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -466,6 +472,7 @@ jobs:
         with:
           name: build
       - name: Check
+        id: check
         env:
           DECIDER: ${{ github.event.comment.user.login }}
         run: |
@@ -477,7 +484,10 @@ jobs:
             --run run.json \
             --out check.json \
             --ledger-entry entry-builder.json \
-            --decider "$DECIDER" || status=$?
+            --decider "$DECIDER" \
+            --attempt 1 || status=$?
+          # 5 is a refused patch: the jobs after this one decide what follows.
+          case "$status" in 0|5) ;; *) exit "$status" ;; esac
           {
             echo "## Guild build"
             echo
@@ -485,7 +495,8 @@ jobs:
             echo
             uv run --project .guild guildkit summary --kind check --file check.json
           } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+          echo "ok=$(jq -r .ok check.json)" >> "$GITHUB_OUTPUT"
+          echo "escalate=$(jq -r .escalate check.json)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -499,10 +510,163 @@ jobs:
           path: entry-builder.json
           retention-days: 90
 
+  build-2:
+    name: build, second attempt
+    needs: [build, check]
+    # Only when the check refused the first attempt and guild.toml has a
+    # [builder.second_attempt]: a fresh checkout at the same base, the
+    # escalated setting, and the check's reasons after the brief. The first
+    # patch is not shown; the second attempt starts from the base again.
+    if: ${{ !cancelled() && needs.check.outputs.escalate == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read # the checkout the Builder edits, at the same base
+      id-token: write # workload identity federation for the model credential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.build.outputs.base }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --extra agents --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build
+          path: ${{ runner.temp }}/in
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: check
+          path: ${{ runner.temp }}/in
+      - name: Install the adopter's environment
+        run: uv sync --locked
+      - name: Identity token
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Build
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$RUNNER_TEMP/in/brief.json" "$RUNNER_TEMP/out/brief.json"
+          uv run --project .guild guildkit build \
+            --config guild.toml \
+            --brief "$RUNNER_TEMP/out/brief.json" \
+            --second-attempt \
+            --previous "$RUNNER_TEMP/in/check.json" \
+            --previous-run "$RUNNER_TEMP/in/run.json" \
+            --root "$PWD" \
+            --role .guild/roles/builder.md \
+            --handbook AGENTS.md \
+            --charter CHARTER.md \
+            --run "$RUNNER_TEMP/out/run.json" \
+            --transcript "$RUNNER_TEMP/out/transcript.jsonl"
+      - name: Patch
+        run: |
+          rm -rf .guild
+          git add -A
+          git diff --cached --binary "$(git rev-parse HEAD)" > "$RUNNER_TEMP/out/patch.diff"
+          git diff --cached --stat "$(git rev-parse HEAD)" | tail -3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-2
+          path: |
+            ${{ runner.temp }}/out/brief.json
+            ${{ runner.temp }}/out/run.json
+            ${{ runner.temp }}/out/patch.diff
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-2-transcript
+          path: ${{ runner.temp }}/out/transcript.jsonl
+          retention-days: 90
+
+  check-2:
+    name: check, second attempt
+    needs: build-2
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the pinned shell
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: guild.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-2
+      - name: Check
+        id: check
+        env:
+          DECIDER: ${{ github.event.comment.user.login }}
+        run: |
+          status=0
+          uv run --project .guild guildkit patch-check \
+            --config guild.toml \
+            --brief brief.json \
+            --diff patch.diff \
+            --run run.json \
+            --out check.json \
+            --ledger-entry entry-builder-2.json \
+            --decider "$DECIDER" \
+            --attempt 2 || status=$?
+          case "$status" in 0|5) ;; *) exit "$status" ;; esac
+          {
+            echo "## Guild build, second attempt"
+            echo
+            uv run --project .guild guildkit summary --kind run --file run.json
+            echo
+            uv run --project .guild guildkit summary --kind check --file check.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "ok=$(jq -r .ok check.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: check-2
+          path: check.json
+          retention-days: 90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: entry-builder-2
+          path: entry-builder-2.json
+          retention-days: 90
+
   build-failed:
     name: tell the issue the build failed
-    needs: [build, check]
-    if: failure() && needs.build.result != 'skipped'
+    needs: [build, check, build-2, check-2]
+    # The first attempt failed with no second, or both did; a job that
+    # crashed counts as a failed attempt.
+    if: >-
+      !cancelled() && needs.build.result != 'skipped'
+      && needs.check.outputs.ok != 'true' && needs.check-2.outputs.ok != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read # check out the pinned shell for the templates
@@ -519,9 +683,10 @@ jobs:
         env:
           DECISION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CHARTER_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CHARTER.md
+          TEMPLATE: ${{ needs.build-2.result != 'skipped' && 'build_escalated' || 'build_failed' }}
         run: |
-          jq -n '{kind: "other", severity: "none", clause: null, missing: [],
-            oracle: "not_applicable", actionable: false, template: "build_failed",
+          jq -n --arg template "$TEMPLATE" '{kind: "other", severity: "none", clause: null, missing: [],
+            oracle: "not_applicable", actionable: false, template: $template,
             labels: ["needs steward"], outcome: "escalated"}' > post.json
           uv run --project .guild guildkit render \
             --record post.json \
@@ -545,10 +710,16 @@ jobs:
           gh label create "needs steward" --force --color 5319e7 --description "Set by Guild"
           gh issue edit "$NUMBER" --add-label "needs steward"
           gh issue comment "$NUMBER" --body-file comment.md
+      - name: Mark the run failed
+        run: exit 1
 
   review:
     name: review
-    needs: [build, check]
+    needs: [build, check, build-2, check-2]
+    # The attempt that passed the check, whichever it was.
+    if: >-
+      !cancelled()
+      && (needs.check.outputs.ok == 'true' || needs.check-2.outputs.ok == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -569,7 +740,7 @@ jobs:
       - run: uv sync --locked --no-default-groups --extra agents --project .guild
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: build
+          name: ${{ needs.check.outputs.ok == 'true' && 'build' || 'build-2' }}
           path: ${{ runner.temp }}/in
       - name: Apply the patch
         run: git apply --index "$RUNNER_TEMP/in/patch.diff"
@@ -634,7 +805,8 @@ jobs:
 
   open:
     name: open
-    needs: [build, check, review]
+    needs: [build, check, build-2, check-2, review]
+    if: ${{ !cancelled() && needs.review.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read # the base checkout the patch is applied to
@@ -653,11 +825,11 @@ jobs:
       - run: uv sync --locked --no-default-groups --project .guild
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: build
+          name: ${{ needs.check.outputs.ok == 'true' && 'build' || 'build-2' }}
           path: ${{ runner.temp }}/build
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: check
+          name: ${{ needs.check.outputs.ok == 'true' && 'check' || 'check-2' }}
           path: ${{ runner.temp }}/check
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -792,7 +964,7 @@ jobs:
 
   ledger:
     name: ledger
-    needs: [intake, triage, plan, plan-post, build, check, build-failed, review, open]
+    needs: [intake, triage, plan, plan-post, build, check, build-2, check-2, build-failed, review, open]
     if: always() && needs.intake.result == 'success'
     runs-on: ubuntu-latest
     permissions:

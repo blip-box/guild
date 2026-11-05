@@ -10,7 +10,9 @@ adopter pins one commit of it.
   with stable IDs. Triage cites them; changing the file is tier 2.
 - `guild.toml`: copied from `templates/guild.toml` and edited: the stewards,
   the tier rules, the agents' models, limits and test command (`[planner]`,
-  `[builder]`, `[reviewer]`), and the prices. Tier 2, and on the reject list.
+  `[builder]`, `[reviewer]`), the Builder's second attempt
+  (`[builder.second_attempt]`, optional), and the prices. Tier 2, and on the
+  reject list.
 - `.github/workflows/guild-triage.yml`, `guild-build.yml`, `guild-batch.yml`
   and `guild-report.yml`: copied from `templates/workflows/`. Workflows are on
   the reject list: agents draft them, a steward commits them. The build

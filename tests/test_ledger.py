@@ -12,6 +12,7 @@ ENTRY: ledger.Entry = {
     "number": 7,
     "author": "someone",
     "role": "triage",
+    "attempt": 1,
     "model": "claude-haiku-5-5",
     "input_tokens": 1200,
     "output_tokens": 80,
@@ -38,7 +39,8 @@ def test_valid_entry_round_trips(tmp_path: Path) -> None:
 def test_line_is_canonical_json() -> None:
     line = ledger.to_line(ENTRY)
     assert line.startswith(
-        '{"at":"2026-10-30T00:00:00Z","author":"someone","cache_read_tokens":0,'
+        '{"at":"2026-10-30T00:00:00Z","attempt":1,"author":"someone",'
+        '"cache_read_tokens":0,'
     )
     assert "\n" not in line
 
@@ -50,6 +52,9 @@ def test_line_is_canonical_json() -> None:
         ("repo", "not a repo!"),
         ("number", -1),
         ("role", "oracle"),
+        ("attempt", 0),
+        ("attempt", True),
+        ("attempt", "2"),
         ("model", "Claude Haiku"),
         ("input_tokens", 1.5),
         ("cost_usd", -0.1),
@@ -200,35 +205,45 @@ def test_report_counts_the_window() -> None:
             decider="atillaguzel",
         ),
         entry(at="2026-11-01T00:00:00Z", number=4, outcome="skipped", model="none"),
+        entry(
+            at="2026-11-01T01:00:00Z",
+            number=2,
+            role="builder",
+            attempt=2,
+            outcome="failed",
+            cost_usd=3.0,
+        ),
         entry(at="2026-11-03T00:00:00Z", number=5),
     ]
     data = ledger.report(entries, since="2026-10-28", until="2026-11-03")
-    assert data["runs"] == 4
+    assert data["runs"] == 5
     assert data["issues"] == 3
-    assert data["by_role"] == {"builder": 1, "triage": 3}
+    assert data["by_role"] == {"builder": 2, "triage": 3}
     assert data["by_outcome"] == {
         "escalated": 1,
+        "failed": 1,
         "needs_info": 1,
         "patched": 1,
         "skipped": 1,
     }
     assert data["by_role_outcome"]["triage:needs_info"] == 1
-    assert data["cost_usd"] == round(0.5 + 2.0 + 0.00016 * 2, 4)
-    assert data["cost_by_role"]["builder"] == 2.0
-    assert data["tokens_in"] == 1200 + 800 + 1000 + 1200 + 1200
-    assert data["tokens_out"] == 80 + 200 + 80 + 80
+    assert data["cost_usd"] == round(0.5 + 2.0 + 3.0 + 0.00016 * 2, 4)
+    assert data["cost_by_role"]["builder"] == 5.0
+    assert data["tokens_in"] == 1200 + 800 + 1000 + 1200 + 1200 + 1200
+    assert data["tokens_out"] == 80 + 200 + 80 + 80 + 80
     assert data["cache_read_share"] == round(800 / data["tokens_in"], 4)
     assert data["steward_decisions"] == 1
     assert data["escalated"] == 1
     assert data["skipped"] == 1
-    assert data["failed"] == 0
+    assert data["failed"] == 1
+    assert data["second_attempts"] == 1
     empty = ledger.report([], since="2026-10-28", until="2026-11-03")
     assert empty["runs"] == 0
     assert empty["cache_read_share"] == 0.0
     text = ledger.report_markdown(data)
-    assert text.startswith("Guild, 2026-10-28 to 2026-11-03: 4 runs on 3 issues,")
-    assert "| builder | 1 | 2.0 |" in text
+    assert text.startswith("Guild, 2026-10-28 to 2026-11-03: 5 runs on 3 issues,")
+    assert "| builder | 2 | 5.0 |" in text
     assert "| skipped | 1 |" in text
-    assert "Skipped by the brakes: 1." in text
+    assert "Skipped by the brakes: 1. Failed: 1. Second attempts: 1." in text
     assert text.isascii()
     assert "no model wrote any of it" in text

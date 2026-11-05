@@ -78,6 +78,16 @@ max_test_rounds = 3
 generated = ["src/confusable/_data/**", "tests/conformance/fixtures/**"]
 generators = ["tools/**"]
 
+# The second attempt, when the first fails the plain check: a fresh checkout
+# at the same base, a stronger setting, its own cap, and the check's reasons
+# in the brief. Without this table a task gets one attempt. The strongest
+# model is already the first choice, so the escalation here is effort.
+[builder.second_attempt]
+model = "claude-opus-5-5"
+max_turns = 100
+cap_usd = 6.00
+effort = "max"
+
 [reviewer]
 model = "claude-opus-5-5"
 max_turns = 40

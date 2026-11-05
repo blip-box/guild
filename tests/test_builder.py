@@ -172,3 +172,50 @@ def test_prompt_is_role_rules_and_brief() -> None:
 def test_check_is_a_plain_dict() -> None:
     result: Any = check(diff(("src/a.py", [], ["x"])))
     assert set(result) == {"ok", "tier", "paths", "rejected", "failures", "reasons"}
+
+
+def test_previous_attempt_tells_the_check_and_the_run() -> None:
+    first = check(diff(("AGENTS.md", [], ["x"])))
+    run = {"subtype": "success", "tests_passed": True, "repeated": False}
+    assert builder.previous_attempt(first, run) == [
+        "the plain check refused the patch: reject list: AGENTS.md"
+    ]
+    run = {
+        "subtype": "error_max_turns",
+        "tests_passed": False,
+        "test_rounds_blocked": 3,
+        "repeated": True,
+    }
+    told = builder.previous_attempt(check(diff(("src/a.py", [], ["x"]))), run)
+    assert told == [
+        "the test command was still failing when the run ended, after 3 rounds"
+        " of fixing",
+        "the run ended with error_max_turns",
+        "the run repeated the same tool call until it was stopped",
+    ]
+    assert builder.previous_attempt(check(diff(("src/a.py", [], ["x"]))), {}) == [
+        "the run ended with no result"
+    ]
+
+
+def test_prompt_adds_the_previous_attempt_after_the_brief() -> None:
+    system, user = builder.prompt(
+        role="ROLE",
+        handbook="HAND",
+        charter="CHART",
+        brief="BRIEF\n",
+        previous=["the plain check refused the patch: reject list: AGENTS.md"],
+    )
+    assert system.startswith("ROLE\n\n# The handbook")
+    assert user == (
+        "BRIEF\n\n# A previous attempt\n\n"
+        "Guild's Builder already tried this brief once, in a checkout like"
+        " yours, and its patch was not accepted. Nothing of that attempt is in"
+        " your checkout: you start from the base again. What the plain check"
+        " and the run reported, in their own words:\n"
+        "- the plain check refused the patch: reject list: AGENTS.md\n"
+    )
+    _, same = builder.prompt(
+        role="ROLE", handbook="HAND", charter="CHART", brief="BRIEF", previous=[]
+    )
+    assert same == "BRIEF"

@@ -232,6 +232,7 @@ def test_every_template_renders_for_its_record(root: Path) -> None:
         "plan_ready",
         "plan_needs_clarification",
         "plan_out_of_scope",
+        "build_escalated",
         "build_failed",
         "build_opened",
         "queued",

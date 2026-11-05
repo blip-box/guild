@@ -73,6 +73,37 @@ def test_example_config_has_the_agents(example_config: Path) -> None:
     assert "tools/**" in cfg["build"]["generators"]
     for agent in cfg["agents"].values():
         assert agent["model"] in cfg["prices"]
+    second = cfg["second_attempt"]
+    assert second is not None
+    assert second["effort"] == "max"
+    assert second["cap_usd"] == 6.0
+    assert second["model"] in cfg["prices"]
+
+
+def test_second_attempt_is_optional_and_checked(example_config: Path) -> None:
+    text = example_config.read_text(encoding="utf-8")
+    start = text.index("[builder.second_attempt]")
+    end = text.index("[reviewer]")
+    without = text[:start] + text[end:]
+    assert config.parse(without)["second_attempt"] is None
+    assert config.parse(without)["agents"]["builder"]["effort"] == "high"
+    with pytest.raises(
+        config.ConfigError, match=re.escape("builder.second_attempt.effort")
+    ):
+        config.parse(text.replace('effort = "max"', 'effort = "most"'))
+    with pytest.raises(
+        config.ConfigError, match=re.escape("builder.second_attempt.max_turns")
+    ):
+        config.parse(text.replace("max_turns = 100", "max_turns = 0"))
+    with pytest.raises(
+        config.ConfigError, match=re.escape("no prices for builder.second_attempt")
+    ):
+        config.parse(
+            text.replace(
+                '[builder.second_attempt]\nmodel = "claude-opus-5-5"',
+                '[builder.second_attempt]\nmodel = "claude-x-1"',
+            )
+        )
 
 
 @pytest.mark.parametrize(

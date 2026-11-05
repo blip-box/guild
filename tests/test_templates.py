@@ -89,3 +89,33 @@ def test_queued_template_renders() -> None:
         {"decision_url": "u", "charter_url": "c"},
     )
     assert comment.startswith("Thank you. Guild has reached its limit")
+
+
+def test_build_template_makes_two_attempts_at_most() -> None:
+    text = (ROOT / "templates" / "workflows" / "guild-build.yml").read_text(
+        encoding="ascii"
+    )
+    jobs = re.findall(r"\n  ([a-z0-9-]+):\n", text[text.index("\njobs:\n") :])
+    assert jobs == [
+        "command",
+        "intake",
+        "triage",
+        "plan",
+        "plan-post",
+        "build",
+        "check",
+        "build-2",
+        "check-2",
+        "build-failed",
+        "review",
+        "open",
+        "ledger",
+    ]
+    assert "--attempt 1 ||" in text
+    assert "--attempt 2 ||" in text
+    assert "--second-attempt" in text
+    assert "needs.check.outputs.escalate == 'true'" in text
+    assert "'build_escalated' || 'build_failed'" in text
+    # The attempt that passed is the one reviewed and opened.
+    assert text.count("needs.check.outputs.ok == 'true' && 'build' || 'build-2'") == 2
+    assert text.count("needs.check.outputs.ok == 'true' && 'check' || 'check-2'") == 1

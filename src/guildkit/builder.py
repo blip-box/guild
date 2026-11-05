@@ -10,8 +10,8 @@ agent's own account of its work is not consulted.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
-from typing import TypedDict
+from collections.abc import Mapping, Sequence
+from typing import Any, TypedDict
 
 from guildkit import tiers
 
@@ -190,10 +190,52 @@ def check_patch(
     }
 
 
-def prompt(*, role: str, handbook: str, charter: str, brief: str) -> tuple[str, str]:
-    """Return the Builder's system prompt and its user text: the brief."""
+def previous_attempt(check: Mapping[str, Any], run: Mapping[str, Any]) -> list[str]:
+    """Return what the second attempt is told about the first, in code's words.
+
+    The check's failures and the run's ending, never the first patch or the
+    agent's own account: the second attempt starts from the base again.
+    """
+    told: list[str] = []
+    if run.get("tests_passed") is False:
+        told.append(
+            "the test command was still failing when the run ended, after"
+            f" {int(run.get('test_rounds_blocked', 0))} rounds of fixing"
+        )
+    subtype = str(run.get("subtype", ""))
+    if subtype != "success":
+        told.append(f"the run ended with {subtype or 'no result'}")
+    if run.get("repeated"):
+        told.append("the run repeated the same tool call until it was stopped")
+    told.extend(f"the plain check refused the patch: {f}" for f in check["failures"])
+    return told
+
+
+def prompt(
+    *,
+    role: str,
+    handbook: str,
+    charter: str,
+    brief: str,
+    previous: list[str] | None = None,
+) -> tuple[str, str]:
+    """Return the Builder's system prompt and its user text: the brief.
+
+    `previous` is what `previous_attempt` says about a first attempt; the
+    second attempt reads it after the brief.
+    """
     system = (
         f"{role.rstrip()}\n\n# The handbook\n\n{handbook.rstrip()}"
         f"\n\n# The charter\n\n{charter.rstrip()}\n"
     )
-    return system, brief
+    if not previous:
+        return system, brief
+    user = (
+        f"{brief.rstrip()}\n\n# A previous attempt\n\n"
+        "Guild's Builder already tried this brief once, in a checkout like"
+        " yours, and its patch was not accepted. Nothing of that attempt is in"
+        " your checkout: you start from the base again. What the plain check"
+        " and the run reported, in their own words:\n"
+        + "".join(f"- {line}\n" for line in previous)
+    )
+    return system, user

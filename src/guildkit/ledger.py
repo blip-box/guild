@@ -52,6 +52,7 @@ class Entry(TypedDict):
     number: int
     author: str
     role: str
+    attempt: int
     model: str
     input_tokens: int
     output_tokens: int
@@ -93,6 +94,11 @@ def validate(entry: dict[str, Any]) -> Entry:
         isinstance(author, str) and (author == "" or bool(_IDENTIFIER.match(author))),
     )
     check("role", entry["role"] in ROLES)
+    attempt = entry["attempt"]
+    check(
+        "attempt",
+        isinstance(attempt, int) and not isinstance(attempt, bool) and attempt >= 1,
+    )
     check(
         "model",
         isinstance(entry["model"], str) and bool(_IDENTIFIER.match(entry["model"])),
@@ -254,6 +260,7 @@ class Report(TypedDict):
     escalated: int
     skipped: int
     failed: int
+    second_attempts: int
 
 
 def report(entries: Iterable[Entry], *, since: str, until: str) -> Report:
@@ -263,7 +270,7 @@ def report(entries: Iterable[Entry], *, since: str, until: str) -> Report:
     pairs: Counter[str] = Counter()
     cost: dict[str, float] = {}
     numbers: set[int] = set()
-    runs = tokens_in = tokens_out = cache_read = stewards = 0
+    runs = tokens_in = tokens_out = cache_read = stewards = second = 0
     for entry in entries:
         day = entry["at"][:10]
         if not since <= day < until:
@@ -278,6 +285,7 @@ def report(entries: Iterable[Entry], *, since: str, until: str) -> Report:
         tokens_out += entry["output_tokens"]
         cache_read += entry["cache_read_tokens"]
         stewards += entry["decided_by"] == "steward"
+        second += entry["attempt"] >= 2
     return {
         "since": since,
         "until": until,
@@ -295,6 +303,7 @@ def report(entries: Iterable[Entry], *, since: str, until: str) -> Report:
         "escalated": outcomes["escalated"],
         "skipped": outcomes["skipped"],
         "failed": outcomes["failed"],
+        "second_attempts": second,
     }
 
 
@@ -323,7 +332,7 @@ def report_markdown(data: Report) -> str:
         f" reads; {data['tokens_out']} out.",
         f"Steward decisions: {data['steward_decisions']}. Escalated:"
         f" {data['escalated']}. Skipped by the brakes: {data['skipped']}. Failed:"
-        f" {data['failed']}.",
+        f" {data['failed']}. Second attempts: {data['second_attempts']}.",
         "",
         "---",
         "This report is from Guild, the stewards' automation. Every number comes"

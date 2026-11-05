@@ -21,7 +21,8 @@ workflows that call the shell. The first adopter is
 > **Status: shadow mode is being built.** The shell exists and is tested:
 > escaping untrusted text, issue snapshots, risk tiers, the ledger, steward
 > commands, the triage call with its policy, the Planner, Builder and
-> Reviewer on the Claude Agent SDK with the plain check on their patches, the
+> Reviewer on the Claude Agent SDK with the plain check on their patches and
+> a second Builder attempt on an escalated setting, the
 > drills that gate changes to any of it, with a rubric grader as the build
 > drills' second judge and a weekly canary, and the ledger with its brakes and
 > weekly report. Nothing has run against a live repository yet.
