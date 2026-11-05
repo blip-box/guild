@@ -82,7 +82,7 @@ def test_builder_gate_reasons(
 
 
 def test_read_only_roles_cannot_write(checkout: Path) -> None:
-    for role in ("planner", "reviewer"):
+    for role in ("planner", "reviewer", "grader"):
         gate = agents.Gate(checkout, role=role, reject=REJECT)
         assert gate.reason("Edit", {"file_path": "src/a.py"}) == "read-only role"
         assert gate.reason("Write", {"file_path": "src/b.py"}) == "read-only role"
@@ -92,6 +92,12 @@ def test_read_only_roles_cannot_write(checkout: Path) -> None:
             "Bash", {"command": "ls"}
         )
         == "tool not allowed for this role"
+    )
+    assert (
+        agents.Gate(checkout, role="grader", reject=REJECT).reason(
+            "Bash", {"command": "uv run --no-sync pytest"}
+        )
+        is None
     )
     assert (
         agents.Gate(checkout, role="reviewer", reject=REJECT).reason(

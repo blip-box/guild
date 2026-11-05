@@ -7,6 +7,7 @@ from guildkit import triage
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = sorted((ROOT / "templates" / "workflows").glob("*.yml"))
+OWN = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
 COMMENTS = sorted((ROOT / "templates" / "comments").glob("*.md"))
 KNOWN_PLACEHOLDERS = {
     "decision_url",
@@ -18,19 +19,24 @@ KNOWN_PLACEHOLDERS = {
 }
 
 
+def first_job_checks_the_kill_switch(path: Path) -> None:
+    text = path.read_text(encoding="ascii")
+    jobs = text.index("\njobs:\n")
+    first = re.search(r"\n  ([a-z-]+):\n(.*?)\n    steps:", text[jobs:], re.S)
+    assert first is not None, path.name
+    assert "vars.GUILD_PAUSED != 'true'" in first[2], f"{path.name}: {first[1]}"
+
+
 def test_every_workflow_checks_the_kill_switch_first() -> None:
     """The first job of every template skips when GUILD_PAUSED is true."""
     assert len(WORKFLOWS) >= 4
     for path in WORKFLOWS:
-        text = path.read_text(encoding="ascii")
-        jobs = text.index("\njobs:\n")
-        first = re.search(r"\n  ([a-z-]+):\n(.*?)\n    steps:", text[jobs:], re.S)
-        assert first is not None, path.name
-        assert "vars.GUILD_PAUSED != 'true'" in first[2], f"{path.name}: {first[1]}"
+        first_job_checks_the_kill_switch(path)
 
 
 def test_every_workflow_pins_actions_and_holds_no_credentials() -> None:
-    for path in WORKFLOWS:
+    assert len(OWN) >= 3
+    for path in WORKFLOWS + OWN:
         text = path.read_text(encoding="ascii")
         assert "permissions: {}" in text, path.name
         for match in re.finditer(r"uses: ([^@\n]+)@([0-9a-f]+) # v", text):
@@ -40,6 +46,26 @@ def test_every_workflow_pins_actions_and_holds_no_credentials() -> None:
             r"uses: actions/checkout@[^\n]+\n((?:          [^\n]*\n)+)", text
         ):
             assert "persist-credentials: false" in match[1], path.name
+
+
+def test_scheduled_workflows_pause_and_are_watched_by_ci() -> None:
+    """A scheduled workflow stops on GUILD_PAUSED, and CI fails while it is disabled."""
+    scheduled = [
+        path.name
+        for path in OWN
+        if "\n  schedule:\n" in path.read_text(encoding="ascii")
+    ]
+    assert scheduled == ["canary.yml"]
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="ascii")
+    listed = re.search(r"for name in ([^;]+); do", ci)
+    assert listed is not None
+    assert sorted(listed[1].split()) == sorted(scheduled)
+    for name in scheduled:
+        path = ROOT / ".github" / "workflows" / name
+        first_job_checks_the_kill_switch(path)
+        text = path.read_text(encoding="ascii")
+        assert "if: failure()" in text or "needs.canary.result" in text, name
+        assert "gh issue create" in text, name
 
 
 def test_comment_templates_use_known_placeholders_only() -> None:

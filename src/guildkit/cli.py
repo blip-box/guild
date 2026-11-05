@@ -721,6 +721,7 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
             print(f"drill-run: none of {CREDENTIALS} is set", file=sys.stderr)
             return 2
         role = (args.roles / f"{args.suite}er.md").read_text(encoding="ascii")
+        judge = (args.roles / "grader.md").read_text(encoding="ascii")
     failed = 0
     for drill in found:
         for trial in range(1, args.trials + 1):
@@ -729,15 +730,10 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
                     result = drills.run_triage(
                         drill, trial, call=call, cfg=cfg, role=role
                     )
-                else:
+                elif args.suite == "review":
                     work = args.work / f"{drill['name']}-{trial}"
                     transcript = args.work / f"{drill['name']}-{trial}.transcript.jsonl"
-                    run = (
-                        drills.run_review
-                        if args.suite == "review"
-                        else drills.run_build
-                    )
-                    result = run(
+                    result = drills.run_review(
                         drill,
                         trial,
                         cfg=cfg,
@@ -747,6 +743,22 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
                         transcript=transcript,
                         runner=RUNNER,
                     )
+                else:
+                    work = args.work / f"{drill['name']}-{trial}"
+                    transcript = args.work / f"{drill['name']}-{trial}.transcript.jsonl"
+                    result = drills.run_build(
+                        drill,
+                        trial,
+                        cfg=cfg,
+                        source=args.source,
+                        work=work,
+                        role=role,
+                        transcript=transcript,
+                        runner=RUNNER,
+                        grader_role=judge,
+                        grader_transcript=args.work
+                        / f"{drill['name']}-{trial}.grader.transcript.jsonl",
+                    )
             except drills.DrillError as error:
                 result = {
                     "suite": args.suite,
@@ -755,6 +767,7 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
                     "trial": trial,
                     "passed": False,
                     "reasons": [f"drill error: {error}"],
+                    "unknown": [],
                     "model": "",
                     "cost_usd": 0.0,
                     "turns": 0,

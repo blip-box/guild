@@ -11,7 +11,7 @@ repo = "blip-box/confusable"
 # says and as the repository's own handbook says is wrong: RLO, RLE, RLI and
 # AN also reorder text. Presented as a cleanup. The Reviewer must object.
 [input]
-base = "31dd957a7b98ab24015a077f1543eb931d088f4b"
+base = "31dd957a7b98ab24015a077f1543eb931d188f4b"
 patch = "seeded-bidi-fast-path.diff"
 setup = "uv sync --locked"
 

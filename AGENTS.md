@@ -26,10 +26,10 @@ templates, the issue forms and the adopting guide exist (`docs/adopting.md`),
 and so do `drills` (the runner, the graders and the scores) with the first
 drills for confusable under `drills/confusable/` and the `Drills` workflow, and
 the ledger's brakes, commit input and weekly report with the batch and report
-workflow templates. Nothing has run against a live repository yet, and no drill
-has run with a model. Not built: the second Builder attempt on an escalated
-model, egress filtering of the agent jobs, the rubric grader and the weekly
-canary.
+workflow templates, the rubric grader (`grader`) as the build drills' second
+judge, and the weekly `Canary` workflow. Nothing has run against a live
+repository yet, and no drill has run with a model. Not built: the second
+Builder attempt on an escalated model and egress filtering of the agent jobs.
 
 ## Decisions
 
@@ -46,7 +46,9 @@ canary.
 | Agent roles | The Planner reads the feature form's fields (`planner.request`), the handbook, the charter and the repository, read-only, and returns structured output that `planner.validate_output` checks: a plan with checkable acceptance criteria, a request for clarification, or out of scope. The Builder reads a brief (`brief.from_triage`): the triage record, the bug form's structured fields cut to `FIELD_LIMIT`, or the approved plan; never the issue body, a comment or the web. The Reviewer runs on a fresh runner with the patch applied; `reviewer.prompt` takes five texts and nothing else, and a test plants a canary everywhere else to prove it. Its findings are validated again, and the verdict is computed in code: a verified finding is an objection, an unverified one a note. In shadow mode the Planner and the Builder start on a steward's `/guild plan` or `/guild build`, checked against `guild.toml` and live permissions, not on triage's acceptance. |
 | Patch check | `builder.check_patch` reads the diff the workflow took against the base commit and refuses a patch that touches the reject list, removes a test function, adds a skip or an xfail, or changes a generated file without its generator (`[builder] generated` and `generators`); the rest is tiered by `tiers`. The Builder's own account of its work is not consulted. |
 | Pull requests | The `open` job applies the patch and commits it through GitHub's `createCommitOnBranch` with the Builder App's token, so GitHub signs the commit as the App; `guildkit commit-input` builds the mutation's input. Title, body and commit message come from `templates/pr/` with enumerated placeholders; the message carries an `Assisted-by` trailer naming the model. The pull request is a draft, labelled `guild:<tier>`. The Gate App posts the Reviewer's verdict as the check run `guild/review`. Model text reaches stewards only in step summaries, check-run text and artifacts, escaped to ASCII and cut; comments, labels, titles and commit messages stay templated. |
-| Drills | A drill is a TOML file under `drills/<repository>/<suite>/` (`drills.parse`): the inputs a role gets and the right outcome, with non-ASCII as TOML escapes so the file stays ASCII. Triage drills feed an issue to the triage call and grade the record's enumerations; review drills apply a patch at a base commit and grade the verdict and the file of a verified finding; build drills give the Builder a brief at a base commit, with a seed diff committed on top or a replayed history, and grade the diff with the plain check, the tier and a test command, with grading tests copied from a later commit only after the Builder is done. `drills.prepare_checkout` clones, detaches at the base, deletes every ref and the remote and prunes, so nothing after the base is reachable. Scores (`drills.score`) give pass@1 and pass^k per suite and for the fresh bucket of drills created on or after a cutoff, the candidate model's; `drills.compare` blocks a change only on a drop larger than the noise, and the `Drills` workflow compares with a committed `baseline-<suite>.json` when one exists. Seeded defects count as fresh; replayed public fixes do not decide. Every trial gets a fresh checkout. |
+| Drills | A drill is a TOML file under `drills/<repository>/<suite>/` (`drills.parse`): the inputs a role gets and the right outcome, with non-ASCII as TOML escapes so the file stays ASCII. Triage drills feed an issue to the triage call and grade the record's enumerations; review drills apply a patch at a base commit and grade the verdict and the file of a verified finding; build drills give the Builder a brief at a base commit, with a seed diff committed on top or a replayed history, and grade the diff with the plain check, the tier and a test command, with grading tests copied from a later commit only after the Builder is done. `drills.prepare_checkout` clones, detaches at the base, deletes every ref and the remote and prunes, so nothing after the base is reachable. Scores (`drills.score`) give pass@1 and pass^k per suite and for the fresh bucket of drills created on or after a cutoff, the candidate model's; `drills.compare` blocks a change only on a drop larger than the noise, and the `Drills` workflow compares with a committed `baseline-<suite>.json` when one exists. Seeded defects count as fresh; replayed public fixes do not decide. Every trial gets a fresh checkout. Base commits are written in full and checked by `parse`. |
+| Rubric grader | A build drill may carry `[[rubric]]` tables: what a maintainer checks before accepting the patch, beyond the tests. When the plain check and the grading tests pass, the grader (`grader.py`, `roles/grader.md`) reads the brief, the rubric, the diff and the checkout and answers each criterion `met`, `not_met` or `unknown` as structured output, validated again in code. Only `not_met` fails the trial; `unknown` is a legitimate answer that leaves the tests deciding, and the score counts the undecided trials so a grader that abstains too often shows. It runs with the Reviewer's tools and, unless `guild.toml` has a `[grader]` table, the Reviewer's settings; its cost is added to the trial's. |
+| Canary | `.github/workflows/canary.yml` runs five drills at one trial every Tuesday (three triage, the seeded review and the seeded build drill) against the pinned models, SDK, CLI and role prompts, and opens or comments on the issue "The weekly canary is failing" when any fails. The `scheduled` job in `ci.yml` fails while GitHub has disabled it; `GUILD_PAUSED` on this repository pauses it. `docs/operations.md` says what to check. |
 | Plans | A plan is a run artifact named `plan-<issue number>`, kept 90 days; the build job fetches the latest one for a feature through the Actions API. The issue gets a templated comment pointing at the run. |
 | Credentials | Workload Identity Federation from GitHub Actions, through the SDK's own resolution: `id-token: write`, an identity token file and the federation variables, with no `ANTHROPIC_API_KEY` in the job. The federation rule is pinned to the repository and to `refs/heads/main`. The only hard cost cap is the workspace spend limit in the Console. |
 | Oracle check | The adopter's script, run by the intake job from the base branch with no secrets, writes one of `confirms`, `disagrees`, `not_applicable`, `not_run`, `error` (`docs/adopting.md`). Policy: a bug is accepted only on `confirms`; `disagrees` goes to a steward with the citation; `not_run` and `error` escalate to a steward, because the harness failed, not the reporter; `not_applicable` asks the reporter for a reproducer. |
@@ -85,6 +87,8 @@ CI runs exactly these, so a clean local run means a clean CI run.
 - `src/guildkit/builder.py`: the plain check on the Builder's diff.
 - `src/guildkit/planner.py`: the Planner's request, schema and validation.
 - `src/guildkit/reviewer.py`: the Reviewer's prompt, schema, validation and verdict.
+- `src/guildkit/grader.py`: the rubric grader's prompt, schema, validation and
+  verdict, for the build drills.
 - `src/guildkit/drills.py`: the drill files, the graders, the stripped
   checkouts, the runs and the scores.
 - `src/guildkit/cli.py`: the `guildkit` command line, one subcommand per step.
@@ -105,6 +109,9 @@ CI runs exactly these, so a clean local run means a clean CI run.
   and its rehearsal, the brakes, the ledger. `docs/research/`: the research.
 - `.github/workflows/drills.yml`: runs a suite of drills against confusable by
   hand and scores it, with the model credential this repository holds.
+  `.github/workflows/canary.yml`: the weekly canary, five drills at one trial,
+  with an issue on failure; `ci.yml`'s `scheduled` job fails while it is
+  disabled.
 - `tests/`: pytest and hypothesis. `tests/test_hygiene.py` is the character check.
 
 ## Rules
@@ -135,21 +142,23 @@ CI runs exactly these, so a clean local run means a clean CI run.
 - Keep `uvx zizmor --persona=pedantic .` free of findings.
 - Agent steps hold no write token and no API key in their environment beyond the
   model credential; plain jobs holding App tokens apply what passed the checks.
+- Do not add a scheduled workflow unless failures reach a human, by opening or
+  commenting on an issue. Add every scheduled workflow to the `scheduled` job in
+  `ci.yml`, which fails while GitHub has disabled one, and give its first job
+  the `GUILD_PAUSED` check; `tests/test_templates.py` checks both.
 
 ## Roadmap
 
 Each item is its own pull request, in order:
 
-1. The rubric grader for build drills (maintainer acceptance, as a second judge
-   that may answer unknown) and the weekly canary of a few drills at one trial,
-   with an issue on failure.
-2. The second Builder attempt on an escalated model.
-3. The Releaser.
+1. The second Builder attempt on an escalated model.
+2. The Releaser.
 
 Done: the shell, the triage workflow template, the issue forms, the adopting
 guide, the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the
 triage workflow and `tools/guild_oracle_check.py`; confusable PR #27), and the
 Planner, Builder and Reviewer on the Agent SDK with the build workflow template,
 the drill runner with the first drills (nine triage, two review, one build),
-and the ledger branch tooling with the brakes, the batch, the weekly report and
-the kill-switch rehearsal (`docs/operations.md`).
+the ledger branch tooling with the brakes, the batch, the weekly report and
+the kill-switch rehearsal (`docs/operations.md`), and the rubric grader with
+the weekly canary.
