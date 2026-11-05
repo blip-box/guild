@@ -27,9 +27,9 @@ and so do `drills` (the runner, the graders and the scores) with the first
 drills for confusable under `drills/confusable/` and the `Drills` workflow, and
 the ledger's brakes, commit input and weekly report with the batch and report
 workflow templates, the rubric grader (`grader`) as the build drills' second
-judge, and the weekly `Canary` workflow. Nothing has run against a live
-repository yet, and no drill has run with a model. Not built: the second
-Builder attempt on an escalated model and egress filtering of the agent jobs.
+judge, the weekly `Canary` workflow, and the Builder's second attempt on an
+escalated setting. Nothing has run against a live repository yet, and no
+drill has run with a model. Not built: egress filtering of the agent jobs.
 
 ## Decisions
 
@@ -44,6 +44,7 @@ Builder attempt on an escalated model and egress filtering of the agent jobs.
 | Model IDs | Pinned in full in `guild.toml`, with a price table per ID for the ledger. The Anthropic IDs have no date suffix; partner platforms get their own entries. |
 | Agent SDK | `claude-agent-sdk` 0.2.176, which bundles Claude Code 2.1.316 (`_cli_version.py`); `tests/test_package.py` checks the pin and this sentence agree. `agents.options` gives the SDK nothing from disk: `setting_sources=[]` (the default loads user, project and local settings, CLAUDE.md, agents, skills and `.mcp.json`), `skills=[]`, `strict_mcp_config=True` with no servers, a fresh `CLAUDE_CONFIG_DIR` per run, telemetry and the updater off, and `verbatim_prompts=True` so nothing in the brief expands a path or runs a command. The role prompt, handbook and charter are read from the base branch and passed as the system prompt. `tools` is a list per role; `disallowed_tools` names the web, subagents and skills as well. Every call goes through `agents.Gate.pre_tool_use`, a PreToolUse hook, and `Gate.can_use_tool` denies anything that reaches the permission prompt. The Builder's Stop hook (`agents.TestGate`) runs the test command and blocks the stop while it fails, `max_test_rounds` times. `max_budget_usd` is the SDK's estimate and a brake; the ledger prices the tokens from `guild.toml`. The run record (`agents.Run`) holds counts and enumerations; the transcript is a separate artifact. |
 | Agent roles | The Planner reads the feature form's fields (`planner.request`), the handbook, the charter and the repository, read-only, and returns structured output that `planner.validate_output` checks: a plan with checkable acceptance criteria, a request for clarification, or out of scope. The Builder reads a brief (`brief.from_triage`): the triage record, the bug form's structured fields cut to `FIELD_LIMIT`, or the approved plan; never the issue body, a comment or the web. The Reviewer runs on a fresh runner with the patch applied; `reviewer.prompt` takes five texts and nothing else, and a test plants a canary everywhere else to prove it. Its findings are validated again, and the verdict is computed in code: a verified finding is an objection, an unverified one a note. In shadow mode the Planner and the Builder start on a steward's `/guild plan` or `/guild build`, checked against `guild.toml` and live permissions, not on triage's acceptance. |
+| Second attempt | A task gets at most two Builder attempts. When the plain check refuses the first and `guild.toml` has `[builder.second_attempt]` (a model, turns, cap and effort of its own; the template escalates effort, the strongest model being the first choice), `check` says so (`escalate`) and the `build-2` job runs the Builder again in a fresh checkout at the same base with `--second-attempt`: the same brief, then what the check and the first run reported in code's words (`builder.previous_attempt`), never the first patch or the agent's account. `check-2` grades it; the attempt that passed is reviewed and opened. Both fail: the `build_escalated` comment, the `needs steward` label, and the run marked failed. Ledger entries carry `attempt`, and the weekly report counts second attempts. In shadow mode the Reviewer's objections do not start a second attempt, because the verdict is not a gate; the drills run one attempt. |
 | Patch check | `builder.check_patch` reads the diff the workflow took against the base commit and refuses a patch that touches the reject list, removes a test function, adds a skip or an xfail, or changes a generated file without its generator (`[builder] generated` and `generators`); the rest is tiered by `tiers`. The Builder's own account of its work is not consulted. |
 | Pull requests | The `open` job applies the patch and commits it through GitHub's `createCommitOnBranch` with the Builder App's token, so GitHub signs the commit as the App; `guildkit commit-input` builds the mutation's input. Title, body and commit message come from `templates/pr/` with enumerated placeholders; the message carries an `Assisted-by` trailer naming the model. The pull request is a draft, labelled `guild:<tier>`. The Gate App posts the Reviewer's verdict as the check run `guild/review`. Model text reaches stewards only in step summaries, check-run text and artifacts, escaped to ASCII and cut; comments, labels, titles and commit messages stay templated. |
 | Drills | A drill is a TOML file under `drills/<repository>/<suite>/` (`drills.parse`): the inputs a role gets and the right outcome, with non-ASCII as TOML escapes so the file stays ASCII. Triage drills feed an issue to the triage call and grade the record's enumerations; review drills apply a patch at a base commit and grade the verdict and the file of a verified finding; build drills give the Builder a brief at a base commit, with a seed diff committed on top or a replayed history, and grade the diff with the plain check, the tier and a test command, with grading tests copied from a later commit only after the Builder is done. `drills.prepare_checkout` clones, detaches at the base, deletes every ref and the remote and prunes, so nothing after the base is reachable. Scores (`drills.score`) give pass@1 and pass^k per suite and for the fresh bucket of drills created on or after a cutoff, the candidate model's; `drills.compare` blocks a change only on a drop larger than the noise, and the `Drills` workflow compares with a committed `baseline-<suite>.json` when one exists. Seeded defects count as fresh; replayed public fixes do not decide. Every trial gets a fresh checkout. Base commits are written in full and checked by `parse`. |
@@ -151,8 +152,7 @@ CI runs exactly these, so a clean local run means a clean CI run.
 
 Each item is its own pull request, in order:
 
-1. The second Builder attempt on an escalated model.
-2. The Releaser.
+1. The Releaser.
 
 Done: the shell, the triage workflow template, the issue forms, the adopting
 guide, the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the
@@ -160,5 +160,5 @@ triage workflow and `tools/guild_oracle_check.py`; confusable PR #27), and the
 Planner, Builder and Reviewer on the Agent SDK with the build workflow template,
 the drill runner with the first drills (nine triage, two review, one build),
 the ledger branch tooling with the brakes, the batch, the weekly report and
-the kill-switch rehearsal (`docs/operations.md`), and the rubric grader with
-the weekly canary.
+the kill-switch rehearsal (`docs/operations.md`), the rubric grader with the
+weekly canary, and the second Builder attempt.

@@ -149,6 +149,7 @@ def _cmd_triage(args: argparse.Namespace) -> int:
         "number": int(snap["number"]),
         "author": ledger.identifier(str(snap["author"])),
         "role": "triage",
+        "attempt": 1,
         "model": cfg["triage"]["model"],
         "input_tokens": usage["input_tokens"],
         "output_tokens": usage["output_tokens"],
@@ -188,6 +189,7 @@ def _entry(
     decider: str,
     content_hash: str,
     author: str = "",
+    attempt: int = 1,
 ) -> ledger.Entry:
     entry: ledger.Entry = {
         "at": _now(),
@@ -195,6 +197,7 @@ def _entry(
         "number": number,
         "author": ledger.identifier(author),
         "role": role,
+        "attempt": attempt,
         "model": model,
         "input_tokens": usage["input_tokens"],
         "output_tokens": usage["output_tokens"],
@@ -221,8 +224,12 @@ def _agent_run(
     user: str,
     output_format: dict[str, Any] | None = None,
     tests: Any = None,
+    agent: config.AgentConfig | None = None,
 ) -> dict[str, Any]:
-    """Run one agent and return its record. The SDK is imported here."""
+    """Run one agent and return its record. The SDK is imported here.
+
+    `agent` overrides the role's settings: the Builder's second attempt.
+    """
     from claude_agent_sdk import query
 
     from guildkit import agents
@@ -230,7 +237,8 @@ def _agent_run(
     if RUNNER is None and not any(name in os.environ for name in CREDENTIALS):
         print(f"{role}: none of {CREDENTIALS} is set", file=sys.stderr)
         raise SystemExit(2)
-    agent = cfg["agents"][role]
+    if agent is None:
+        agent = cfg["agents"][role]
     gate = agents.Gate(args.root, role=role, reject=cfg["paths"]["reject"])
     with tempfile.TemporaryDirectory(prefix="guild-claude-") as config_dir:
         agent_options = agents.options(
@@ -383,13 +391,29 @@ def _cmd_build(args: argparse.Namespace) -> int:
     cfg = config.load(args.config)
     data = _read_json(args.brief)
     role, handbook, charter = _texts(args)
+    agent = None
+    previous = None
+    if args.second_attempt:
+        agent = cfg["second_attempt"]
+        if agent is None:
+            print("build: guild.toml has no [builder.second_attempt]", file=sys.stderr)
+            return 4
+        if args.previous is not None:
+            run = _read_json(args.previous_run) if args.previous_run else {}
+            previous = builder.previous_attempt(_read_json(args.previous), run)
     system, user = builder.prompt(
-        role=role, handbook=handbook, charter=charter, brief=brief.render(data)
+        role=role,
+        handbook=handbook,
+        charter=charter,
+        brief=brief.render(data),
+        previous=previous,
     )
     tests = agents.TestGate(
         args.root, cfg["build"]["test_command"], rounds=cfg["build"]["max_test_rounds"]
     )
-    run = _agent_run(args, cfg, role="builder", system=system, user=user, tests=tests)
+    run = _agent_run(
+        args, cfg, role="builder", system=system, user=user, tests=tests, agent=agent
+    )
     _write_json(args.run, run)
     return 0
 
@@ -414,6 +438,12 @@ def _cmd_patch_check(args: argparse.Namespace) -> int:
     check["run_ok"] = _run_ok(run)
     check["ok"] = bool(check["ok"] and check["run_ok"])
     check["outcome"] = "patched" if check["ok"] else "failed"
+    check["attempt"] = args.attempt
+    # A failed first attempt gets a second, on the escalated setting, when
+    # guild.toml has one; the workflow reads this and nothing else.
+    check["escalate"] = bool(
+        not check["ok"] and args.attempt == 1 and cfg["second_attempt"] is not None
+    )
     entry = _entry(
         cfg,
         number=int(data["number"]),
@@ -427,6 +457,7 @@ def _cmd_patch_check(args: argparse.Namespace) -> int:
         decider=args.decider,
         content_hash=data["content_hash"],
         author=str(data.get("author", "")),
+        attempt=args.attempt,
     )
     _write_json(args.out, check)
     _write_json(args.ledger_entry, entry)
@@ -574,7 +605,11 @@ def _cmd_summary(args: argparse.Namespace) -> int:
     elif args.kind == "review":
         print(reviewer.markdown(data))
     elif args.kind == "check":
-        print(f"Patch check: {'ok' if data['ok'] else 'failed'}, tier {data['tier']}.")
+        state = "ok" if data["ok"] else "failed"
+        attempt = f", attempt {data['attempt']}" if "attempt" in data else ""
+        print(f"Patch check: {state}, tier {data['tier']}{attempt}.")
+        if data.get("escalate"):
+            print("A second attempt follows, on the escalated setting.")
         for failure in data["failures"]:
             print(f"- {failure}")
         for reason in data["reasons"]:
@@ -893,6 +928,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("build", help="run the Builder in the checkout")
     agent_arguments(p)
     p.add_argument("--brief", type=Path, required=True)
+    p.add_argument(
+        "--second-attempt",
+        action="store_true",
+        help="the escalated setting of [builder.second_attempt]",
+    )
+    p.add_argument("--previous", type=Path, help="the first attempt's check record")
+    p.add_argument("--previous-run", type=Path, help="the first attempt's run record")
     p.set_defaults(func=_cmd_build)
 
     p = sub.add_parser("patch-check", help="the plain check on the Builder's diff")
@@ -903,6 +945,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--ledger-entry", type=Path, required=True)
     p.add_argument("--decider", default="")
+    p.add_argument("--attempt", type=int, default=1, choices=(1, 2))
     p.set_defaults(func=_cmd_patch_check)
 
     p = sub.add_parser("review", help="run the Reviewer on the applied patch")

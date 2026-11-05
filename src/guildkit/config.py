@@ -54,6 +54,8 @@ class Config(TypedDict):
     triage: TriageConfig
     agents: dict[Role, AgentConfig]
     build: BuildRules
+    # The Builder's second attempt, on an escalated setting: None for one attempt.
+    second_attempt: AgentConfig | None
     prices: dict[str, Prices]
 
 
@@ -90,6 +92,22 @@ def _tier(table: dict[str, Any], key: str, where: str) -> str:
     if value not in TIER_NAMES:
         raise ConfigError(f"{where}.{key}: expected one of {list(TIER_NAMES)}")
     return str(value)
+
+
+def _agent(table: dict[str, Any], where: str) -> AgentConfig:
+    agent: AgentConfig = {
+        "model": _get(table, "model", str, where),
+        "max_turns": _get(table, "max_turns", int, where),
+        "cap_usd": _get(table, "cap_usd", float, where),
+        "effort": _get(table, "effort", str, where),
+    }
+    if not _MODEL_ID.match(agent["model"]):
+        raise ConfigError(f"{where}.model: not a model ID")
+    if agent["effort"] not in EFFORTS:
+        raise ConfigError(f"{where}.effort: expected one of {list(EFFORTS)}")
+    if agent["max_turns"] < 1:
+        raise ConfigError(f"{where}.max_turns: expected at least 1")
+    return agent
 
 
 def parse(text: str) -> Config:
@@ -153,20 +171,12 @@ def parse(text: str) -> Config:
             # The drills' second judge; the Reviewer's settings unless set.
             agents[role] = agents["reviewer"].copy()
             continue
-        table = _table(data.get(role), role)
-        agents[role] = {
-            "model": _get(table, "model", str, role),
-            "max_turns": _get(table, "max_turns", int, role),
-            "cap_usd": _get(table, "cap_usd", float, role),
-            "effort": _get(table, "effort", str, role),
-        }
-        if not _MODEL_ID.match(agents[role]["model"]):
-            raise ConfigError(f"{role}.model: not a model ID")
-        if agents[role]["effort"] not in EFFORTS:
-            raise ConfigError(f"{role}.effort: expected one of {list(EFFORTS)}")
-        if agents[role]["max_turns"] < 1:
-            raise ConfigError(f"{role}.max_turns: expected at least 1")
+        agents[role] = _agent(_table(data.get(role), role), role)
     builder_table = _table(data.get("builder"), "builder")
+    second_attempt = None
+    if "second_attempt" in builder_table:
+        where = "builder.second_attempt"
+        second_attempt = _agent(_table(builder_table["second_attempt"], where), where)
     build: BuildRules = {
         "test_command": _get(builder_table, "test_command", str, "builder"),
         "max_test_rounds": _get(builder_table, "max_test_rounds", int, "builder"),
@@ -198,6 +208,11 @@ def parse(text: str) -> Config:
     for role, agent in agents.items():
         if agent["model"] not in prices:
             raise ConfigError(f"models: no prices for {role}.model {agent['model']}")
+    if second_attempt is not None and second_attempt["model"] not in prices:
+        raise ConfigError(
+            f"models: no prices for builder.second_attempt.model"
+            f" {second_attempt['model']}"
+        )
 
     return {
         "repo": repo,
@@ -211,6 +226,7 @@ def parse(text: str) -> Config:
         "triage": triage,
         "agents": agents,
         "build": build,
+        "second_attempt": second_attempt,
         "prices": prices,
     }
 

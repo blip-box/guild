@@ -220,10 +220,18 @@ def test_patch_check_command(tmp_path: Path, example_config: Path) -> None:
         encoding="ascii",
     )
     assert cli.main(argv) == 5
-    assert json.loads(out.read_text(encoding="ascii"))["failures"] == [
-        "reject list: AGENTS.md"
-    ]
-    assert json.loads(entry.read_text(encoding="ascii"))["outcome"] == "failed"
+    check = json.loads(out.read_text(encoding="ascii"))
+    assert check["failures"] == ["reject list: AGENTS.md"]
+    assert check["attempt"] == 1
+    assert check["escalate"] is True  # the example config has a second attempt
+    ledger_entry = json.loads(entry.read_text(encoding="ascii"))
+    assert ledger_entry["outcome"] == "failed"
+    assert ledger_entry["attempt"] == 1
+    assert cli.main([*argv, "--attempt", "2"]) == 5
+    check = json.loads(out.read_text(encoding="ascii"))
+    assert check["attempt"] == 2
+    assert check["escalate"] is False
+    assert json.loads(entry.read_text(encoding="ascii"))["attempt"] == 2
 
     diff.write_text(DIFF, encoding="ascii")
     write(run, {**RUN_OK, "tests_passed": False})
@@ -231,6 +239,16 @@ def test_patch_check_command(tmp_path: Path, example_config: Path) -> None:
     check = json.loads(out.read_text(encoding="ascii"))
     assert check["run_ok"] is False
     assert check["failures"] == []
+    assert check["escalate"] is True
+
+    # No second attempt configured: nothing to escalate to.
+    text = example_config.read_text(encoding="utf-8")
+    start, end = text.index("[builder.second_attempt]"), text.index("[reviewer]")
+    one = tmp_path / "one.toml"
+    one.write_text(text[:start] + text[end:], encoding="utf-8")
+    argv[argv.index("--config") + 1] = str(one)
+    assert cli.main(argv) == 5
+    assert json.loads(out.read_text(encoding="ascii"))["escalate"] is False
 
 
 def test_commit_input_command(tmp_path: Path, example_config: Path) -> None:
@@ -422,6 +440,41 @@ def test_build_command_runs_the_builder(
     assert fake["prompt"].startswith("Repository: blip-box/confusable\nIssue: #7\n")
     assert "Code points: U+0430" in fake["prompt"]
     assert set(options.hooks) == {"PreToolUse", "Stop"}
+    assert options.effort == "high"
+
+    # The second attempt: the escalated setting, and what the check said.
+    first_check = write(
+        tmp_path / "check.json",
+        {"ok": False, "failures": ["reject list: AGENTS.md"], "run_ok": True},
+    )
+    first_run = write(tmp_path / "first-run.json", {**RUN_OK, "subtype": "success"})
+    argv += [
+        "--second-attempt",
+        "--previous",
+        str(first_check),
+        "--previous-run",
+        str(first_run),
+    ]
+    assert cli.main(argv) == 0
+    options = fake["options"]
+    assert options.effort == "max"
+    assert options.max_turns == 100
+    assert options.max_budget_usd == 6.0
+    assert fake["prompt"].startswith("Repository: blip-box/confusable\nIssue: #7\n")
+    assert "# A previous attempt" in fake["prompt"]
+    assert (
+        "- the plain check refused the patch: reject list: AGENTS.md" in fake["prompt"]
+    )
+    run = json.loads((out / "run.json").read_text(encoding="ascii"))
+    assert run["role"] == "builder"
+
+    # Without the table there is no second attempt.
+    text = test_config.read_text(encoding="utf-8")
+    start, end = text.index("[builder.second_attempt]"), text.index("[reviewer]")
+    one = tmp_path / "one.toml"
+    one.write_text(text[:start] + text[end:], encoding="utf-8")
+    argv[argv.index("--config") + 1] = str(one)
+    assert cli.main(argv) == 4
 
 
 def test_review_command_validates_and_judges(
