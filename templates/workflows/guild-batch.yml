@@ -1,0 +1,57 @@
+# Guild batch for an adopting repository. Copy to .github/workflows/.
+#
+# Twice a day, re-read the issues the brakes queued (label guild:queued) by
+# dispatching guild-triage.yml for each; the brakes apply again there, so a
+# flood drains at the day's limit and no faster. Holds the repository's own
+# token only: reading issues and starting a workflow.
+#
+# Add this workflow to the `scheduled` job of ci.yml, which fails while a
+# scheduled workflow is disabled; a failure here opens or comments on an
+# issue, so it never fails silently.
+name: Guild batch
+
+on:
+  schedule:
+    - cron: "23 */12 * * *" # 00:23 and 12:23 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  batch:
+    name: batch
+    if: vars.GUILD_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # dispatch guild-triage.yml for each queued issue
+      issues: write # list the queued issues; report a failure
+    steps:
+      - name: Dispatch the queued issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh issue list --state open --label "guild:queued" --limit 100 --json number --jq '.[].number' \
+            | while IFS= read -r number; do
+                echo "dispatching triage for #$number"
+                gh workflow run guild-triage.yml -f "issue=$number"
+              done
+      - name: Report the failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="The Guild batch is failing"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "It failed again: $RUN_URL"
+          else
+            printf 'The twice-daily Guild batch failed: %s\n\nUntil it is fixed, queued issues are not re-read.\n' "$RUN_URL" > body.md
+            gh issue create --title "$title" --body-file body.md
+          fi

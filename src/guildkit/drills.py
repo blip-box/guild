@@ -290,6 +290,7 @@ def _drill_brief(drill: Drill) -> brief.Brief:
     return {
         "repo": drill["repo"],
         "number": int(data.get("number", 0)),
+        "author": "drill",
         "kind": data["kind"],
         "clause": data["clause"],
         "severity": data["severity"],

@@ -234,6 +234,7 @@ def test_every_template_renders_for_its_record(root: Path) -> None:
         "plan_out_of_scope",
         "build_failed",
         "build_opened",
+        "queued",
     }
     assert seen == {p.stem for p in templates.glob("*.md")} - others
     for template in sorted(others):

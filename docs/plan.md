@@ -435,3 +435,6 @@ found and what it changed.
 | 59 | Drills are TOML files per suite with the role's inputs and the right outcome; seeded defects from the project's known traps count as fresh, replayed public fixes do not decide | Phase 2 |
 | 60 | Drill checkouts are clones detached at the base with every ref, the remote and unreachable objects removed, one per trial; grading tests from later commits arrive after the Builder is done | Phase 2 |
 | 61 | Scores report pass@1 and pass^k, with the fresh bucket deciding; a committed baseline per suite and a noise threshold make the gate | Phase 2 |
+| 62 | The ledger is appended by a `ledger` job at the end of every workflow through `createCommitOnBranch` with the Builder App's token, from the run's entry artifacts; the branch is a steward's to create and protect | Phase 2 |
+| 63 | Entries carry the issue author's login; the brakes count the day's triage entries by author and in total, and a queued issue gets a label, a comment and a skipped entry; a twice-daily batch dispatches the triage workflow for queued issues | Phase 2 |
+| 64 | The weekly report is a comment on one pinned issue, from counts only, after an audit that the ledger never lost a line; the kill-switch rehearsal is a written procedure in `docs/operations.md` | Phase 2 |

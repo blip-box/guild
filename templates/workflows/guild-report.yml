@@ -1,0 +1,106 @@
+# Guild weekly report for an adopting repository. Copy to .github/workflows/.
+#
+# Every Monday: audit that the guild-ledger branch only ever appended, count
+# the week from the ledger, and post the numbers as a comment on the report
+# issue through the Triage App. Numbers and enumerations only.
+#
+# Add this workflow to the `scheduled` job of ci.yml; a failure here opens
+# or comments on an issue, so it never fails silently.
+name: Guild report
+
+on:
+  schedule:
+    - cron: "17 7 * * 1" # Mondays, 07:17 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: report
+    if: vars.GUILD_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # guild.toml, the pinned shell and the public ledger branch
+      issues: write # report a failure
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: guild.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --locked --no-default-groups --project .guild
+      - name: Fetch the ledger
+        # The branch is public, so an anonymous fetch does.
+        run: |
+          git fetch --quiet --depth=1000 origin guild-ledger
+          git show origin/guild-ledger:ledger.jsonl > ledger.jsonl
+      - name: Audit that the ledger only grew
+        # Every commit on the branch adds lines to ledger.jsonl and removes
+        # none. A removed line fails the report and reaches a steward.
+        run: |
+          removed=$(git log --format= -p origin/guild-ledger -- ledger.jsonl | grep -c '^-[^-]' || true)
+          if [ "$removed" != "0" ]; then
+            echo "::error::$removed lines were removed from the ledger in its history"
+            exit 1
+          fi
+      - name: Count the week
+        run: |
+          since=$(date -u -d '7 days ago' +%F)
+          until=$(date -u +%F)
+          uv run --project .guild guildkit ledger-report \
+            --config guild.toml --ledger ledger.jsonl \
+            --since "$since" --until "$until" \
+            --out report.md --json report.json
+          {
+            echo "## Guild weekly report"
+            echo
+            cat report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.GUILD_TRIAGE_APP_ID }}
+          private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
+          permission-issues: write
+      - name: Post
+        # One issue, "Guild weekly report", kept open and pinned by a steward;
+        # each week is a comment on it.
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title="Guild weekly report"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -z "$number" ]; then
+            printf 'Each week Guild comments here with the counts from the ledger on the guild-ledger branch: runs, outcomes, cost, tokens. No model writes any of it.\n' > body.md
+            number=$(gh issue create --title "$title" --body-file body.md --json number --jq .number 2>/dev/null \
+              || gh issue create --title "$title" --body-file body.md | grep -o '[0-9]*$')
+          fi
+          gh issue comment "$number" --body-file report.md
+      - name: Report the failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="The Guild weekly report is failing"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "It failed again: $RUN_URL"
+          else
+            printf 'The weekly Guild report failed: %s\n\nUntil it is fixed, the ledger goes unread and unaudited.\n' "$RUN_URL" > body.md
+            gh issue create --title "$title" --body-file body.md
+          fi
