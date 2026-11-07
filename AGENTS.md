@@ -117,7 +117,10 @@ CI runs exactly these, so a clean local run means a clean CI run.
   hand and scores it, with the model credential this repository holds.
   `.github/workflows/canary.yml`: the weekly canary, five drills at one trial,
   with an issue on failure; `ci.yml`'s `scheduled` job fails while it is
-  disabled.
+  disabled. `.github/workflows/dependabot-auto-merge.yml`: auto-merge for
+  Dependabot's non-major updates, except Anthropic or Claude tooling, which a
+  human reviews. Branch protection on `main` requires only `ci.yml`'s
+  `required` job, so the jobs can change without touching repository settings.
 - `tests/`: pytest and hypothesis. `tests/test_hygiene.py` is the character check.
 
 ## Rules
@@ -137,7 +140,11 @@ CI runs exactly these, so a clean local run means a clean CI run.
   line takes `--reply` for triage and `cli.RUNNER` for the agents.
 - Mirror `blip-box/confusable`'s tooling: ruff, mypy strict, zizmor, actionlint,
   pre-commit, Conventional Commits, squash merges. The maintainer merges; agents do
-  not merge and do not work around tooling that blocks a merge.
+  not merge and do not work around tooling that blocks a merge. Dependabot's
+  non-major updates merge on green CI, except the Agent SDK, the CLI and any
+  other Anthropic or Claude tooling, which a human reviews first. Keep
+  Dependabot security updates off while that runs: they skip the cooldown, so
+  a just-published release would merge on CI alone.
 
 ### GitHub Actions
 
