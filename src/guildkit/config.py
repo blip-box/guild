@@ -40,6 +40,15 @@ class AgentConfig(TypedDict):
     effort: str
 
 
+class ReleaseRules(TypedDict):
+    """When a release is due and what the steward's checklist names."""
+
+    library: list[str]
+    stale_days: int
+    version_files: list[str]
+    prerelease: str
+
+
 class Config(TypedDict):
     """Everything in guild.toml."""
 
@@ -56,6 +65,7 @@ class Config(TypedDict):
     build: BuildRules
     # The Builder's second attempt, on an escalated setting: None for one attempt.
     second_attempt: AgentConfig | None
+    release: ReleaseRules
     prices: dict[str, Prices]
 
 
@@ -186,6 +196,26 @@ def parse(text: str) -> Config:
     if not build["test_command"].strip():
         raise ConfigError("builder.test_command: empty")
 
+    release_table = _table(data.get("release", {}), "release")
+    release: ReleaseRules = {
+        "library": _strings(release_table, "library", "release")
+        if "library" in release_table
+        else ["src/**"],
+        "stale_days": _get(release_table, "stale_days", int, "release")
+        if "stale_days" in release_table
+        else 28,
+        "version_files": _strings(release_table, "version_files", "release")
+        if "version_files" in release_table
+        else ["pyproject.toml"],
+        "prerelease": _get(release_table, "prerelease", str, "release")
+        if "prerelease" in release_table
+        else "",
+    }
+    if release["stale_days"] < 1:
+        raise ConfigError("release.stale_days: expected at least 1")
+    if release["prerelease"] not in ("", "a", "b", "rc"):
+        raise ConfigError("release.prerelease: expected a, b, rc or nothing")
+
     models = _table(data.get("models"), "models")
     prices: dict[str, Prices] = {}
     for model_id, table in models.items():
@@ -227,6 +257,7 @@ def parse(text: str) -> Config:
         "agents": agents,
         "build": build,
         "second_attempt": second_attempt,
+        "release": release,
         "prices": prices,
     }
 

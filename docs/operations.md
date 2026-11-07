@@ -1,7 +1,8 @@
 # Operating Guild
 
 What stewards do while Guild runs: the kill switch and its rehearsal, the
-brakes, the ledger and its weekly report, and the canary. `docs/adopting.md`
+brakes, the ledger and its weekly report, the canary, and the release
+proposals. `docs/adopting.md`
 says what to set up once; this says what to do on a Tuesday.
 
 ## The kill switch
@@ -91,3 +92,21 @@ drill that fails for a reason of its own is a bug in Guild: fix the drill or
 the shell in a pull request and dispatch the canary by hand to confirm.
 Close the issue when it passes. `GUILD_PAUSED` on `blip-box/guild` pauses
 the canary; CI fails while GitHub has disabled the workflow.
+
+## The release proposal
+
+The release workflow runs after every merge and every Monday. When a merged
+fix or feature touched the library, or the oldest unreleased change is older
+than `release.stale_days`, it opens or rewrites the one open issue labelled
+`guild:release`: the version it proposes, why now, the change list from the
+merged pull request titles, the reporters to credit, whether the test suite
+passed at that commit, and the checklist. No model writes any of it.
+
+A release is tier 3: a steward approves it and a steward runs it. With one
+steward, the issue is the public notice, and the release may run three days
+after it, with the Reviewer's no-objection. The steward bumps the version in
+the files the issue names, merges that as tier 2, tags the merge commit
+`vX.Y.Z` and lets the publishing workflow run from the protected `pypi`
+environment; closing the issue with the tag ends the proposal, and Guild
+proposes the next release from there. A proposal nobody wants is closed with
+a comment; the next run opens a new one when a release is due again.

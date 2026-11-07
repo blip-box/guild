@@ -164,3 +164,28 @@ def test_grader_takes_the_reviewer_settings_unless_set(example_config: Path) -> 
         )
     with pytest.raises(config.ConfigError, match=re.escape("grader.effort")):
         config.parse(own.replace('effort = "low"', 'effort = "most"'))
+
+
+def test_release_rules_default_and_are_checked(example_config: Path) -> None:
+    text = example_config.read_text(encoding="utf-8")
+    cfg = config.parse(text)
+    assert cfg["release"] == {
+        "library": ["src/confusable/**"],
+        "stale_days": 28,
+        "version_files": ["pyproject.toml", "src/confusable/__init__.py"],
+        "prerelease": "a",
+    }
+    start, end = text.index("[release]"), text.index("# US dollars per million")
+    without = config.parse(text[:start] + text[end:])
+    assert without["release"] == {
+        "library": ["src/**"],
+        "stale_days": 28,
+        "version_files": ["pyproject.toml"],
+        "prerelease": "",
+    }
+    with pytest.raises(config.ConfigError, match=re.escape("release.stale_days")):
+        config.parse(text.replace("stale_days = 28", "stale_days = 0"))
+    with pytest.raises(config.ConfigError, match=re.escape("release.prerelease")):
+        config.parse(text.replace('prerelease = "a"', 'prerelease = "alpha"'))
+    with pytest.raises(config.ConfigError, match=re.escape("release.library")):
+        config.parse(text.replace('library = ["src/confusable/**"]', "library = [1]"))

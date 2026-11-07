@@ -14,9 +14,9 @@ import base64
 import datetime
 import json
 import os
-import re
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ from guildkit import (
     drills,
     ledger,
     planner,
+    releaser,
     reviewer,
     snapshot,
     tiers,
@@ -38,7 +39,6 @@ from guildkit.roles import Role
 
 # Tests set this to a fake that yields SDK messages; None means the SDK.
 RUNNER: Any = None
-_PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 
 HARNESS = f"guildkit-{__version__}"
 # An API key, or workload identity federation, which the anthropic client
@@ -562,10 +562,7 @@ def _cmd_commit_input(args: argparse.Namespace) -> int:
 
 
 def _fill(template: str, values: dict[str, str]) -> str:
-    unknown = sorted(set(_PLACEHOLDER.findall(template)) - set(values))
-    if unknown:
-        raise ValueError(f"unknown placeholders {unknown}")
-    return _PLACEHOLDER.sub(lambda m: values[m[1]], template)
+    return releaser.fill(template, values)
 
 
 def _cmd_pr_text(args: argparse.Namespace) -> int:
@@ -604,6 +601,8 @@ def _cmd_summary(args: argparse.Namespace) -> int:
             print(planner.markdown(data))
     elif args.kind == "review":
         print(reviewer.markdown(data))
+    elif args.kind == "release":
+        print(releaser.markdown(data))
     elif args.kind == "check":
         state = "ok" if data["ok"] else "failed"
         attempt = f", attempt {data['attempt']}" if "attempt" in data else ""
@@ -623,6 +622,77 @@ def _cmd_summary(args: argparse.Namespace) -> int:
         )
         for tool, count in data["tool_calls"].items():
             print(f"- {tool}: {count}")
+    return 0
+
+
+def _cmd_config_get(args: argparse.Namespace) -> int:
+    """Print one value of guild.toml, for a workflow step."""
+    cfg = config.load(args.config)
+    if args.key == "test_command":
+        print(cfg["build"]["test_command"])
+    return 0
+
+
+def _cmd_release(args: argparse.Namespace) -> int:
+    """Propose a release from the unreleased commits: exit 0 due, 4 not due."""
+    cfg = config.load(args.config)
+    try:
+        commits = releaser.parse_log(
+            args.log.read_text(encoding="utf-8", errors="replace")
+        )
+        with args.pyproject.open("rb") as f:
+            project_version = str(tomllib.load(f)["project"]["version"])
+        proposal = releaser.propose(
+            commits,
+            entries=_read_ledger(args.ledger),
+            last_tag=args.last_tag,
+            project_version=project_version,
+            head=args.head,
+            today=args.today,
+            tests_exit=args.tests_exit,
+            rules=cfg["release"],
+        )
+        title, body = releaser.render(
+            proposal,
+            commits,
+            title_template=(args.templates / "title.md").read_text(encoding="ascii"),
+            body_template=(args.templates / "proposal.md").read_text(encoding="ascii"),
+            run_url=args.run_url,
+            version_files=cfg["release"]["version_files"],
+        )
+    except (releaser.ReleaseError, ValueError, KeyError) as error:
+        print(f"release: {error}", file=sys.stderr)
+        return 2
+    _write_json(args.out, releaser.as_dict(proposal))
+    args.out_title.write_text(title, encoding="ascii")
+    args.out_body.write_text(body, encoding="ascii")
+    print(releaser.markdown(proposal))
+    return 0 if proposal["due"] else 4
+
+
+def _cmd_release_entry(args: argparse.Namespace) -> int:
+    """Write the ledger entry for a posted proposal: no model, no tokens."""
+    cfg = config.load(args.config)
+    proposal = _read_json(args.proposal)
+    entry = _entry(
+        cfg,
+        number=args.number,
+        role="releaser",
+        model="none",
+        usage={
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        },
+        cost=0.0,
+        outcome="posted",
+        citation=None,
+        decided_by="script",
+        decider="",
+        content_hash=str(proposal["content_hash"]),
+    )
+    _write_json(args.out, entry)
     return 0
 
 
@@ -984,7 +1054,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=_cmd_pr_text)
 
     p = sub.add_parser("summary", help="Markdown for the step summary")
-    p.add_argument("--kind", choices=("plan", "review", "check", "run"), required=True)
+    p.add_argument(
+        "--kind", choices=("plan", "review", "check", "run", "release"), required=True
+    )
     p.add_argument("--file", type=Path, required=True)
     p.set_defaults(func=_cmd_summary)
 
@@ -1015,6 +1087,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, required=True, help="the Markdown")
     p.add_argument("--json", type=Path, help="the numbers")
     p.set_defaults(func=_cmd_ledger_report)
+
+    p = sub.add_parser("config-get", help="print one value of guild.toml")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("key", choices=("test_command",))
+    p.set_defaults(func=_cmd_config_get)
+
+    p = sub.add_parser("release", help="propose a release from the unreleased commits")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--log", type=Path, required=True, help="git log, see releaser")
+    p.add_argument("--ledger", type=Path, help="ledger.jsonl, for the credits")
+    p.add_argument("--last-tag", default="", help="the last v* tag, or empty")
+    p.add_argument("--pyproject", type=Path, required=True)
+    p.add_argument("--head", required=True, help="the commit proposed")
+    p.add_argument("--today", required=True, help="YYYY-MM-DD")
+    p.add_argument("--tests-exit", type=int, required=True)
+    p.add_argument("--templates", type=Path, required=True)
+    p.add_argument("--run-url", required=True)
+    p.add_argument("--out", type=Path, required=True, help="the proposal")
+    p.add_argument("--out-title", type=Path, required=True)
+    p.add_argument("--out-body", type=Path, required=True)
+    p.set_defaults(func=_cmd_release)
+
+    p = sub.add_parser("release-entry", help="the ledger entry for a posted proposal")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--proposal", type=Path, required=True)
+    p.add_argument("--number", type=int, required=True, help="the issue")
+    p.add_argument("--out", type=Path, required=True)
+    p.set_defaults(func=_cmd_release_entry)
 
     p = sub.add_parser("drill-list", help="list the drills under a directory")
     p.add_argument("--dir", type=Path, required=True)

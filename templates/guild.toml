@@ -97,6 +97,19 @@ effort = "high"
 # with the Reviewer's settings. An optional [grader] table with the same keys
 # overrides them.
 
+# Releases. The Releaser is a script with no model call: it proposes a release
+# when a merged fix or feature touched the library, or when the oldest
+# unreleased change is stale_days old, as an issue a steward acts on (T3).
+[release]
+# Paths whose change is a change to what the library does.
+library = ["src/confusable/**"]
+stale_days = 28
+# Where the version is written; the steward's checklist names them.
+version_files = ["pyproject.toml", "src/confusable/__init__.py"]
+# While set, proposals are pre-releases ("a", "b" or "rc"); remove it for
+# the first final release.
+prerelease = "a"
+
 # US dollars per million tokens, Anthropic API list prices, for the ledger.
 # Partner platforms price differently: add their IDs with their prices.
 [models."claude-haiku-5-5"]
