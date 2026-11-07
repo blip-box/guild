@@ -48,6 +48,32 @@ def test_every_workflow_pins_actions_and_holds_no_credentials() -> None:
             assert "persist-credentials: false" in match[1], path.name
 
 
+APP_TOKEN = re.compile(
+    r"uses: actions/create-github-app-token@[0-9a-f]{40} # v[^\n]*\n"
+    r"(?:[ ]+(?!with:)[a-z-]+: [^\n]*\n){0,2}"
+    r"[ ]+with:\n"
+    r"[ ]+client-id: \$\{\{ vars\.GUILD_(TRIAGE|BUILDER|GATE)_CLIENT_ID \}\}\n"
+    r"[ ]+private-key: \$\{\{ secrets\.GUILD_\1_APP_KEY \}\}\n"
+)
+
+
+def test_app_tokens_come_from_client_ids() -> None:
+    """Every App token step passes the App's Client ID and its private key.
+
+    create-github-app-token retired ``app-id`` for ``client-id``, and the
+    variable is named for what it holds.
+    """
+    steps = 0
+    for path in WORKFLOWS + OWN:
+        text = path.read_text(encoding="ascii")
+        assert "app-id" not in text, path.name
+        assert "_APP_ID" not in text, path.name
+        uses = text.count("uses: actions/create-github-app-token@")
+        assert len(APP_TOKEN.findall(text)) == uses, path.name
+        steps += uses
+    assert steps >= 12
+
+
 def test_scheduled_workflows_pause_and_are_watched_by_ci() -> None:
     """A scheduled workflow stops on GUILD_PAUSED, and CI fails while it is disabled."""
     scheduled = [

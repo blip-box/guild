@@ -39,7 +39,7 @@ jobs:
           ref: ${{ vars.GUILDKIT_REF }}
           path: .guild
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked --no-default-groups --project .guild
       - name: Fetch the ledger
         # The branch is public, so an anonymous fetch does.
@@ -71,7 +71,7 @@ jobs:
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app
         with:
-          app-id: ${{ vars.GUILD_TRIAGE_APP_ID }}
+          client-id: ${{ vars.GUILD_TRIAGE_CLIENT_ID }}
           private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
           permission-issues: write
       - name: Post

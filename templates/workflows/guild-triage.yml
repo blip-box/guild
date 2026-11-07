@@ -8,8 +8,9 @@
 # Nothing a model wrote reaches the issue: comments come from templates.
 #
 # Needs: the variable GUILDKIT_REF (a commit of blip-box/guild), the variable
-# GUILD_TRIAGE_APP_ID and the secret GUILD_TRIAGE_APP_KEY (a GitHub App with
-# issues: write, installed on this repository), and for the model credential
+# GUILD_TRIAGE_CLIENT_ID (the Client ID of a GitHub App with issues: write,
+# installed on this repository) and the secret GUILD_TRIAGE_APP_KEY (its
+# private key), and for the model credential
 # either workload identity federation (variables ANTHROPIC_FEDERATION_RULE_ID,
 # ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID and, for a rule over
 # several workspaces, ANTHROPIC_WORKSPACE_ID) or, until that exists, the
@@ -80,7 +81,7 @@ jobs:
           ref: ${{ vars.GUILDKIT_REF }}
           path: .guild
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Install the pinned shell
         run: uv sync --locked --no-default-groups --project .guild
       - name: Write the event
@@ -168,7 +169,7 @@ jobs:
           ref: ${{ vars.GUILDKIT_REF }}
           path: .guild
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked --no-default-groups --project .guild
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -225,7 +226,7 @@ jobs:
           ref: ${{ vars.GUILDKIT_REF }}
           path: .guild
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked --no-default-groups --project .guild
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -252,7 +253,7 @@ jobs:
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app
         with:
-          app-id: ${{ vars.GUILD_TRIAGE_APP_ID }}
+          client-id: ${{ vars.GUILD_TRIAGE_CLIENT_ID }}
           private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
           permission-issues: write
       - name: Post
@@ -282,7 +283,7 @@ jobs:
           ref: ${{ vars.GUILDKIT_REF }}
           path: .guild
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked --no-default-groups --project .guild
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -302,7 +303,7 @@ jobs:
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app
         with:
-          app-id: ${{ vars.GUILD_TRIAGE_APP_ID }}
+          client-id: ${{ vars.GUILD_TRIAGE_CLIENT_ID }}
           private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
           permission-issues: write
       - name: Post
@@ -338,7 +339,7 @@ jobs:
           ref: ${{ vars.GUILDKIT_REF }}
           path: .guild
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked --no-default-groups --project .guild
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -348,7 +349,7 @@ jobs:
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app
         with:
-          app-id: ${{ vars.GUILD_BUILDER_APP_ID }}
+          client-id: ${{ vars.GUILD_BUILDER_CLIENT_ID }}
           private-key: ${{ secrets.GUILD_BUILDER_APP_KEY }}
           permission-contents: write
       - name: Append
