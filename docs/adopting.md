@@ -69,15 +69,16 @@ before then fails at intake, which is noise, not harm.
    workflow a token for it.
 1. **The Triage App.** A GitHub App owned by the organisation with the
    repository permission issues: write and nothing else, installed on the
-   adopting repository only. Its ID goes in the variable
-   `GUILD_TRIAGE_APP_ID`, its private key in the secret `GUILD_TRIAGE_APP_KEY`.
+   adopting repository only. Its Client ID, from the App's settings page,
+   goes in the variable `GUILD_TRIAGE_CLIENT_ID` (the token action retired
+   the numeric App ID), its private key in the secret `GUILD_TRIAGE_APP_KEY`.
    Agent comments are posted as the App, so they are visibly Guild's.
 2. **The Builder App and the Gate App.** Two more GitHub Apps, installed on
    the adopting repository only: the Builder App with contents: write and
-   pull requests: write (variable `GUILD_BUILDER_APP_ID`, secret
+   pull requests: write (variable `GUILD_BUILDER_CLIENT_ID`, secret
    `GUILD_BUILDER_APP_KEY`), which commits the patch through
    `createCommitOnBranch`, so the commit is signed, and opens the draft pull
-   request; the Gate App with checks: write (variable `GUILD_GATE_APP_ID`,
+   request; the Gate App with checks: write (variable `GUILD_GATE_CLIENT_ID`,
    secret `GUILD_GATE_APP_KEY`), which posts the Reviewer's verdict as the
    check run `guild/review`. Whether an App may open pull requests under the
    collaborators-only setting is undocumented; the first shadow build shows it.
