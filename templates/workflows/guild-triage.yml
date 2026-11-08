@@ -260,7 +260,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           GH_REPO: ${{ github.repository }}
-          NUMBER: ${{ github.event.issue.number }}
+          NUMBER: ${{ github.event.issue.number || inputs.issue }}
         run: |
           jq -r '.[]' labels.json | while IFS= read -r label; do
             gh label create "$label" --force --color 5319e7 --description "Set by Guild triage"

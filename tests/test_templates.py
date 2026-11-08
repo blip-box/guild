@@ -92,6 +92,26 @@ def test_graphql_variables_travel_as_an_object() -> None:
     assert calls >= 4
 
 
+def test_dispatchable_workflows_take_the_issue_from_the_input_too() -> None:
+    """Where a workflow can be dispatched for an issue, every use of the number
+    falls back to the input.
+
+    The rehearsal dispatches the triage workflow for an issue; its post job
+    read only the event's number, found none, and failed on an empty string.
+    """
+    checked = 0
+    for path in WORKFLOWS:
+        text = path.read_text(encoding="ascii")
+        if not re.search(r"workflow_dispatch:\n    inputs:\n      issue:", text):
+            continue
+        checked += 1
+        for match in re.finditer(
+            r"\$\{\{[^}]*github\.event\.issue\.number[^}]*\}\}", text
+        ):
+            assert "|| inputs.issue" in match[0], f"{path.name}: {match[0]}"
+    assert checked >= 1
+
+
 def test_scheduled_workflows_pause_and_are_watched_by_ci() -> None:
     """A scheduled workflow stops on GUILD_PAUSED, and CI fails while it is disabled."""
     scheduled = [
