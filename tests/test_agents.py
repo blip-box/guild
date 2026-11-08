@@ -107,6 +107,17 @@ def test_read_only_roles_cannot_write(checkout: Path) -> None:
     )
 
 
+def test_structured_output_is_allowed_for_every_role(checkout: Path) -> None:
+    """The SDK's StructuredOutput tool carries the structured answer.
+
+    The first canary run with a model credential had the Reviewer and the
+    Grader refused on it, so their findings never reached the harness.
+    """
+    for role in ("planner", "builder", "reviewer", "grader"):
+        gate = agents.Gate(checkout, role=role, reject=REJECT)
+        assert gate.reason(agents.STRUCTURED_OUTPUT, {"findings": []}) is None, role
+
+
 def test_symlink_out_of_the_checkout_is_outside(checkout: Path, tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
