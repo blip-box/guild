@@ -55,6 +55,10 @@ TOOLS: dict[Role, list[str]] = {
     "grader": ["Read", "Glob", "Grep", "Bash"],
 }
 WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+# The SDK delivers `output_format` through a tool call the model makes; it
+# writes nothing and is how the Planner, Reviewer and Grader hand in their
+# answers, so the gate lets it through for every role.
+STRUCTURED_OUTPUT = "StructuredOutput"
 READ_TOOLS = ("Read", "Glob", "Grep")
 # Removed from the model's context as well, in case `tools` ever widens.
 NEVER = [
@@ -169,6 +173,8 @@ class Gate:
 
     def reason(self, tool: str, tool_input: dict[str, Any]) -> str | None:
         """Return why the call is refused, or None to let it run."""
+        if tool == STRUCTURED_OUTPUT:
+            return None
         if tool in NEVER:
             return "tool not allowed for this role"
         if tool in WRITE_TOOLS and self.role != "builder":
