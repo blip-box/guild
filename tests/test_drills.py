@@ -292,6 +292,27 @@ def test_prepare_checkout_commits_the_seed(
     assert "+++ b/new.txt" in diff
 
 
+def test_prepare_checkout_applies_a_relative_seed(
+    source: tuple[Path, str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seed named relative to our cwd applies although git runs in `work`.
+
+    The canary passes `--dir drills/confusable`, so every patch path is
+    relative; git apply resolved it against the checkout and found nothing.
+    """
+    repo, base, _ = source
+    (tmp_path / "seeds").mkdir()
+    (tmp_path / "seeds" / "seed.diff").write_text(
+        "diff --git a/src/x.py b/src/x.py\n--- a/src/x.py\n+++ b/src/x.py\n"
+        "@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 0\n",
+        encoding="ascii",
+    )
+    monkeypatch.chdir(tmp_path)
+    work = tmp_path / "work"
+    drills.prepare_checkout(repo, base, work, seed=Path("seeds/seed.diff"))
+    assert (work / "src" / "x.py").read_text(encoding="ascii").endswith("return 0\n")
+
+
 def canned(reply: dict[str, Any]) -> triage.Caller:
     def call(
         system: str, user: str, *, model: str, max_tokens: int

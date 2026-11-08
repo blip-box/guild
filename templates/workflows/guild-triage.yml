@@ -380,7 +380,10 @@ jobs:
             uv run --project .guild guildkit ledger-input \
               --config guild.toml --current current.jsonl "${args[@]}" \
               --head "$head" --run-url "$RUN_URL" --out input.json
-            if gh api graphql -F input=@input.json -F query=@query.graphql --jq '.data.createCommitOnBranch.commit.oid'; then
+            # --input sends the variables as an object; -F would send the file as a string.
+            jq -n --rawfile query query.graphql --slurpfile variables input.json \
+              '{query: $query, variables: $variables[0]}' > body.json
+            if gh api graphql --input body.json --jq '.data.createCommitOnBranch.commit.oid'; then
               exit 0
             fi
             head=$(gh api "repos/$GH_REPO/git/ref/heads/guild-ledger" --jq .object.sha)

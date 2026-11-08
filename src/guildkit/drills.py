@@ -281,7 +281,8 @@ def prepare_checkout(
     git("reflog", "expire", "--expire=now", "--all", cwd=work)
     git("gc", "--quiet", "--prune=now", cwd=work)
     if seed is not None:
-        git("apply", "--index", str(seed), cwd=work)
+        # git resolves a relative path against cwd, which is `work`, not ours.
+        git("apply", "--index", str(Path(seed).resolve()), cwd=work)
         git(*_GIT_IDENTITY, "commit", "--quiet", "-m", "seed", cwd=work)
     return git("rev-parse", "HEAD", cwd=work).strip()
 
@@ -465,7 +466,7 @@ def run_review(
     directory = Path(drill["directory"])
     prepare_checkout(source, inp["base"], work)
     patch = (directory / inp["patch"]).read_text(encoding="utf-8")
-    git("apply", "--index", str(directory / inp["patch"]), cwd=work)
+    git("apply", "--index", str((directory / inp["patch"]).resolve()), cwd=work)
     if "setup" in inp and _command(inp["setup"], work, 900) != 0:
         raise DrillError(f"{drill['name']}: the setup command failed")
     handbook = (work / "AGENTS.md").read_text(encoding="utf-8")

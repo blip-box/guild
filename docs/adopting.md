@@ -85,7 +85,14 @@ before then fails at intake, which is noise, not harm.
 3. **The model credential.** A Console workspace for Guild with a monthly
    spend limit (the only hard cap). Then workload identity federation: on the
    Console's Workload identity page, connect GitHub Actions, and pin the rule
-   to this repository and `refs/heads/main`. The rule, organisation and
+   to this repository and `refs/heads/main`. GitHub issues an immutable
+   subject by default, `repo:ORG@ORGID/REPO@REPOID:ref:refs/heads/main`;
+   read the prefix with `gh api repos/ORG/REPO/actions/oidc/customization/sub`
+   and put it in the rule's subject pattern, because the wizard writes the
+   older `repo:ORG/REPO:...` form, which never matches (the Console's
+   authentication events then say `match_subject_prefix`). The rule's
+   allowed events must include every event, not only push: Guild runs on
+   issues, comments, schedules and dispatches. The rule, organisation and
    service account IDs go in the variables `ANTHROPIC_FEDERATION_RULE_ID`,
    `ANTHROPIC_ORGANIZATION_ID` and `ANTHROPIC_SERVICE_ACCOUNT_ID`
    (`ANTHROPIC_WORKSPACE_ID` only for a rule over several workspaces). Until
