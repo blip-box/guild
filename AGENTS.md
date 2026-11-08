@@ -53,7 +53,7 @@ built: egress filtering of the agent jobs.
 | Rubric grader | A build drill may carry `[[rubric]]` tables: what a maintainer checks before accepting the patch, beyond the tests. When the plain check and the grading tests pass, the grader (`grader.py`, `roles/grader.md`) reads the brief, the rubric, the diff and the checkout and answers each criterion `met`, `not_met` or `unknown` as structured output, validated again in code. Only `not_met` fails the trial; `unknown` is a legitimate answer that leaves the tests deciding, and the score counts the undecided trials so a grader that abstains too often shows. It runs with the Reviewer's tools and, unless `guild.toml` has a `[grader]` table, the Reviewer's settings; its cost is added to the trial's. |
 | Canary | `.github/workflows/canary.yml` runs five drills at one trial every Tuesday (three triage, the seeded review and the seeded build drill) against the pinned models, SDK, CLI and role prompts, and opens or comments on the issue "The weekly canary is failing" when any fails. The `scheduled` job in `ci.yml` fails while GitHub has disabled it; `GUILD_PAUSED` on this repository pauses it. `docs/operations.md` says what to check. |
 | Plans | A plan is a run artifact named `plan-<issue number>`, kept 90 days; the build job fetches the latest one for a feature through the Actions API. The issue gets a templated comment pointing at the run. |
-| Credentials | Workload Identity Federation from GitHub Actions, through the SDK's own resolution: `id-token: write`, an identity token file and the federation variables, with no `ANTHROPIC_API_KEY` in the job. The federation rule is pinned to the repository and to `refs/heads/main`. The only hard cost cap is the workspace spend limit in the Console. |
+| Credentials | Workload Identity Federation from GitHub Actions, through the SDK's own resolution: `id-token: write`, an identity token file and the federation variables, with no `ANTHROPIC_API_KEY` in the job. The federation rule is pinned to the repository and to `refs/heads/main`, with GitHub's immutable subject prefix (`repo:ORG@ORGID/REPO@REPOID`), and allows every event, since nothing Guild does runs on push; `docs/adopting.md` step 3 has the details. The only hard cost cap is the workspace spend limit in the Console. |
 | Oracle check | The adopter's script, run by the intake job from the base branch with no secrets, writes one of `confirms`, `disagrees`, `not_applicable`, `not_run`, `error` (`docs/adopting.md`). Policy: a bug is accepted only on `confirms`; `disagrees` goes to a steward with the citation; `not_run` and `error` escalate to a steward, because the harness failed, not the reporter; `not_applicable` asks the reporter for a reproducer. |
 | Triggers | The triage and build workflows run on `issue_comment`, which zizmor flags, with a justification comment: the text never reaches a shell or a token, the intake job holds no secret, the triage model has no tools, and the agents never see the comment. Keep that true. |
 | Ledger | One JSON line per run with sorted keys. Every field is a number, an enumerated value, an identifier or a hash; `ledger.validate` rejects anything else, so no model text can reach it. It lives as `ledger.jsonl` on the adopter's `guild-ledger` branch, appended by the `ledger` job that ends every workflow: the job downloads the run's `entry-*` artifacts, builds one `createCommitOnBranch` input with `guildkit ledger-input` and sends it with the Builder App's token, so the commit is signed and names the head it expects; a concurrent append makes it rebuild from the new head, five times. Without the branch the job warns and the entries stay in the artifacts. The weekly report audits that no commit removed a line. Entries carry the issue author's login, so the brakes can count by author. |
@@ -162,9 +162,13 @@ CI runs exactly these, so a clean local run means a clean CI run.
 
 ## Roadmap
 
-Nothing is queued. The next items come from the first shadow runs
-(`docs/plan.md`, section 13), and one gap stays open: egress filtering of the
-agent jobs, for which GitHub offers no first-party mechanism yet.
+From the first shadow runs (2026-11-08): two of the canary's three triage
+drills fail against `claude-haiku-5-5`. `bug-confirmed-paypal` is answered
+`needs_info` instead of `bug_accepted`, and `injection-in-a-bug-report` is
+classed `other` rather than `bug` and sent to a steward. Decide whether the
+triage role prompt or the drills' expectations move, then make the canary
+green. One gap stays open: egress filtering of the agent jobs, for which
+GitHub offers no first-party mechanism yet.
 
 Done: the shell, the triage workflow template, the issue forms, the adopting
 guide, the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the

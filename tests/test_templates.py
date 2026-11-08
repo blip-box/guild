@@ -74,6 +74,24 @@ def test_app_tokens_come_from_client_ids() -> None:
     assert steps >= 12
 
 
+def test_graphql_variables_travel_as_an_object() -> None:
+    """Every GraphQL call sends its variables through --input.
+
+    `gh api graphql -F input=@file` sends the file's text as the variable, and
+    GitHub rejects a string where CreateCommitOnBranchInput is expected; the
+    first shadow run's ledger job failed five times on it.
+    """
+    calls = 0
+    for path in WORKFLOWS:
+        text = path.read_text(encoding="ascii")
+        assert "-F input=" not in text, path.name
+        for line in text.splitlines():
+            if "gh api graphql" in line:
+                assert "--input" in line, f"{path.name}: {line.strip()}"
+                calls += 1
+    assert calls >= 4
+
+
 def test_scheduled_workflows_pause_and_are_watched_by_ci() -> None:
     """A scheduled workflow stops on GUILD_PAUSED, and CI fails while it is disabled."""
     scheduled = [
