@@ -63,7 +63,10 @@ The `guild-ledger` branch holds `ledger.jsonl`, one JSON line per run. Only
 the ledger jobs write it, through the Builder App's token and GitHub's commit
 mutation, so every commit is signed and checks the head it was built for.
 The weekly report audits that no commit ever removed a line, counts the
-week, and comments on the "Guild weekly report" issue. Read the ledger with
+week, and comments on the "Guild weekly report" issue, which it opens as the
+Triage App when none is open and a steward pins. Issues a bot opened are not
+triaged, so the report, a release proposal and a failing workflow's issue
+get no labels and no templated reply. Read the ledger with
 `guildkit ledger-report`, or with `jq`:
 
 ```bash

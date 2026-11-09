@@ -112,6 +112,28 @@ def test_dispatchable_workflows_take_the_issue_from_the_input_too() -> None:
     assert checked >= 1
 
 
+def test_triage_intake_skips_what_bots_open_and_write() -> None:
+    """Neither an issue a bot opened nor a bot's comment starts triage.
+
+    The first weekly report opened its issue as the Triage App, and triage
+    classified it and asked for a steward: the intake condition checked the
+    comment's author but not the issue's. Guild's own issues, Actions' and
+    Dependabot's are not submissions, whoever comments on them.
+    """
+    text = (ROOT / "templates" / "workflows" / "guild-triage.yml").read_text(
+        encoding="ascii"
+    )
+    jobs = text[text.index("\njobs:\n") :]
+    intake = re.search(r"\n  intake:\n(.*?)\n    runs-on:", jobs, re.S)
+    assert intake is not None
+    condition = re.search(r"\n    if: >-\n(.*)", intake[1], re.S)
+    assert condition is not None
+    assert "github.event.issue.pull_request == null" in condition[1]
+    assert "github.event.issue.user.type != 'Bot'" in condition[1]
+    assert "github.event.comment.user.type != 'Bot'" in condition[1]
+    assert "github.event_name == 'workflow_dispatch'" in condition[1]
+
+
 def test_scheduled_workflows_pause_and_are_watched_by_ci() -> None:
     """A scheduled workflow stops on GUILD_PAUSED, and CI fails while it is disabled."""
     scheduled = [
