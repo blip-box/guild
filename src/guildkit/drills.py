@@ -60,7 +60,9 @@ class Trial(TypedDict):
     """One run of one drill. Numbers and enumerations; the reasons are code's.
 
     `unknown` names the rubric criteria the grader could not decide; the
-    trial passes with them, and the score counts it as undecided.
+    trial passes with them, and the score counts it as undecided. `actual`
+    holds what the model chose when no transcript does: the triage reading
+    and its template, as enumerations; empty for the other suites.
     """
 
     suite: str
@@ -70,6 +72,7 @@ class Trial(TypedDict):
     passed: bool
     reasons: list[str]
     unknown: list[str]
+    actual: dict[str, Any]
     model: str
     cost_usd: float
     turns: int
@@ -134,6 +137,13 @@ def parse(text: str, *, suite: str, directory: Path) -> Drill:
         if inp["oracle"] not in triage.ORACLES:
             raise DrillError("input.oracle: not an oracle outcome")
         _require(expect, ("kind", "actionable", "template"), "expect")
+        # One value, or the list a negative drill accepts.
+        for key, allowed in (("kind", triage.KINDS), ("template", None)):
+            values = expect[key] if isinstance(expect[key], list) else [expect[key]]
+            if not values or not all(isinstance(v, str) for v in values):
+                raise DrillError(f"expect.{key}: a string or a list of strings")
+            if allowed is not None and any(v not in allowed for v in values):
+                raise DrillError(f"expect.{key}: not a triage kind")
     elif suite == "review":
         _require(inp, ("base", "patch", "brief"), "input")
         _sha(inp, "base", "input")
@@ -188,11 +198,18 @@ def load(root: Path, suite: str) -> list[Drill]:
 
 
 def grade_triage(record: triage.Record, expect: dict[str, Any]) -> list[str]:
-    """Compare the triage record with what the drill expects."""
+    """Compare the triage record with what the drill expects.
+
+    `kind` and `template` may each be one value or a list: a negative drill
+    pins what must not happen, not one classification.
+    """
     reasons = []
     actual: dict[str, Any] = dict(record)
     for key in ("kind", "actionable", "template"):
-        if actual[key] != expect[key]:
+        if isinstance(expect[key], list):
+            if actual[key] not in expect[key]:
+                reasons.append(f"{key}: {actual[key]} not in {expect[key]}")
+        elif actual[key] != expect[key]:
             reasons.append(f"{key}: {actual[key]} != {expect[key]}")
     if "severity" in expect and record["severity"] not in expect["severity"]:
         reasons.append(f"severity: {record['severity']} not in {expect['severity']}")
@@ -337,6 +354,7 @@ def _trial(
     turns: int,
     duration_ms: int,
     unknown: list[str] | None = None,
+    actual: dict[str, Any] | None = None,
 ) -> Trial:
     return {
         "suite": drill["suite"],
@@ -346,6 +364,7 @@ def _trial(
         "passed": not reasons,
         "reasons": reasons,
         "unknown": unknown or [],
+        "actual": actual or {},
         "model": model,
         "cost_usd": cost,
         "turns": turns,
@@ -384,7 +403,35 @@ def run_triage(
     if not parsed:
         reasons.append("the reply did not parse")
     cost = cost_usd(usage, cfg["prices"][model])
-    return _trial(drill, trial, reasons, model=model, cost=cost, turns=1, duration_ms=0)
+    actual = {
+        key: record[key]
+        for key in ("kind", "severity", "clause", "missing", "template")
+    }
+    return _trial(
+        drill,
+        trial,
+        reasons,
+        model=model,
+        cost=cost,
+        turns=1,
+        duration_ms=0,
+        actual=actual,
+    )
+
+
+def describe(trial: Trial) -> str:
+    """Return the failed trial's reading for the runner's line, or nothing.
+
+    Enumerations only, so the line stays the runner's own: the kind, the
+    template and the missing fields the model chose, never its words.
+    """
+    actual = trial["actual"]
+    if trial["passed"] or not actual:
+        return ""
+    parts = [f"kind {actual['kind']}", f"template {actual['template']}"]
+    if actual["missing"]:
+        parts.append("missing " + ", ".join(actual["missing"]))
+    return f" ({'; '.join(parts)})"
 
 
 AgentRun = Callable[..., dict[str, Any]]

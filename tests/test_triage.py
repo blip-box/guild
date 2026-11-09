@@ -95,6 +95,25 @@ def test_bug_policy() -> None:
     assert uncited["actionable"] is False
     assert uncited["missing"] == ["citation"]
 
+    # The oracle ran, so the fields it needed are there whatever the model
+    # thought; a field it did not need is still missing.
+    doubted = triage.apply_policy(
+        output(missing=["reproducer", "code_points", "function"]), "confirms"
+    )
+    assert doubted["actionable"] is True
+    assert doubted["missing"] == []
+    assert doubted["template"] == "bug_accepted"
+    assert (
+        triage.apply_policy(output(missing=["reproducer"]), "disagrees")["missing"]
+        == []
+    )
+    unversioned = triage.apply_policy(output(missing=["version"]), "confirms")
+    assert unversioned["actionable"] is False
+    assert unversioned["template"] == "needs_info"
+    assert unversioned["missing"] == ["version"]
+    doubted_unrun = triage.apply_policy(output(missing=["reproducer"]), "not_run")
+    assert doubted_unrun["missing"] == ["reproducer"]
+
     disagrees = triage.apply_policy(output(), "disagrees")
     assert disagrees["actionable"] is False
     assert disagrees["template"] == "spec_disagrees"
