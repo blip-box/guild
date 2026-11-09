@@ -27,6 +27,8 @@ Classify with these fields and no others:
 - "missing": the list of what a steward would need and the text lacks, from:
   "summary", "code_points", "function", "expected", "actual", "version",
   "citation", "clause", "reproducer". An empty list means nothing is missing.
+  The reproducer is the code points with the function called: a report that
+  gives both has one, whether or not it holds code.
 
 The line "Oracle check:" tells you what the independent implementations said
 about the reported code points: "confirms" (they agree with the reporter),

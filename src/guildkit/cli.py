@@ -873,6 +873,7 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
                     "passed": False,
                     "reasons": [f"drill error: {error}"],
                     "unknown": [],
+                    "actual": {},
                     "model": "",
                     "cost_usd": 0.0,
                     "turns": 0,
@@ -881,7 +882,10 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
             drills.write_trials(args.out, [result])
             state = "pass" if result["passed"] else "FAIL"
             failed += not result["passed"]
-            print(f"{args.suite} {drill['name']} trial {trial}: {state}")
+            print(
+                f"{args.suite} {drill['name']} trial {trial}: {state}"
+                f"{drills.describe(result)}"
+            )
     return 0 if not failed else 1
 
 

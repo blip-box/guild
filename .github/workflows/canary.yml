@@ -88,7 +88,8 @@ jobs:
             --work "$RUNNER_TEMP/work" \
             --out "$RUNNER_TEMP/out/trials.jsonl" \
             "${only[@]}" > "$RUNNER_TEMP/out/run.log" || status=$?
-          # The lines are the runner's own: drill names and pass or FAIL.
+          # The lines are the runner's own: drill names, pass or FAIL and, for
+          # a failed triage drill, the enumerations the model chose.
           {
             echo "## Canary: $SUITE"
             echo

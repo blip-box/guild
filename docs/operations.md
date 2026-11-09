@@ -81,8 +81,9 @@ one trial: three triage drills, the seeded review drill and the seeded build
 drill, against the pinned models, SDK, CLI and role prompts. When any fails
 it opens the issue "The weekly canary is failing", or comments on it while
 it stays open, and comments once more when a run passes again. The step
-summary of each suite names the drills that failed; the run's artifacts hold
-the trials with their reasons and the transcripts.
+summary of each suite names the drills that failed and, for a triage drill,
+the kind, template and missing fields the model chose; the run's artifacts
+hold the trials with their reasons and the transcripts.
 
 What to check, in order: the model credential on `blip-box/guild` (until it
 is set, every run fails this way); a retired or renamed model in the

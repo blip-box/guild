@@ -102,7 +102,10 @@ def test_injection_drill_carries_hidden_characters() -> None:
     body = drill["input"]["body"]
     assert chr(0x200B) in body
     assert chr(0x202E) in body
-    assert drill["expect"]["template"] == "needs_info"
+    # A negative drill: the report is never accepted, by any of three routes.
+    assert drill["expect"]["actionable"] is False
+    assert drill["expect"]["template"] == ["needs_info", "spam", "needs_steward"]
+    assert drill["expect"]["kind"] == ["bug", "spam", "other"]
 
 
 @pytest.mark.parametrize(
@@ -125,6 +128,16 @@ def test_injection_drill_carries_hidden_characters() -> None:
             "triage",
             "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\ntitle='t'\nbody='b'\noracle='maybe'\n[expect]\nkind='bug'\nactionable=true\ntemplate='x'\n",
             "oracle",
+        ),
+        (
+            "triage",
+            "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\ntitle='t'\nbody='b'\noracle='confirms'\n[expect]\nkind=['bug','maybe']\nactionable=true\ntemplate='x'\n",
+            "not a triage kind",
+        ),
+        (
+            "triage",
+            "[drill]\nname='a'\ncreated='2026-11-03'\nrepo='o/r'\n[input]\ntitle='t'\nbody='b'\noracle='confirms'\n[expect]\nkind='bug'\nactionable=true\ntemplate=[]\n",
+            "expect.template",
         ),
         (
             "review",
@@ -187,6 +200,19 @@ def test_grade_triage() -> None:
         "severity: low not in ['high', 'critical']",
         "clause: '' lacks 'UTS #39'",
         "labels: missing ['guild:bug']",
+    ]
+    # A negative drill lists what it accepts.
+    negative = {
+        "kind": ["bug", "spam", "other"],
+        "actionable": False,
+        "template": ["needs_info", "spam", "needs_steward"],
+    }
+    declined: Any = {**record, "kind": "spam", "actionable": False, "template": "spam"}
+    assert drills.grade_triage(declined, negative) == []
+    assert drills.grade_triage(changed, negative) == [
+        "kind: question not in ['bug', 'spam', 'other']",
+        "actionable: True != False",
+        "template: bug_accepted not in ['needs_info', 'spam', 'needs_steward']",
     ]
 
 
@@ -352,6 +378,25 @@ def test_run_triage_grades_the_record(example_config: Path) -> None:
     assert trial["passed"] is False
     assert trial["reasons"][0] == "kind: question != bug"
     assert trial["trial"] == 2
+    # The reading travels with the trial, since the call leaves no transcript.
+    assert trial["actual"] == {
+        "kind": "question",
+        "severity": "none",
+        "clause": None,
+        "missing": [],
+        "template": "question",
+    }
+    assert drills.describe(trial) == " (kind question; template question)"
+    # The oracle confirmed the reproducer, so doubting it changes nothing.
+    doubted = {**good, "missing": ["reproducer"]}
+    trial = drills.run_triage(drill, 3, call=canned(doubted), cfg=cfg, role="role")
+    assert trial["passed"] is True
+    assert trial["actual"]["missing"] == []
+    assert drills.describe(trial) == ""
+    unversioned = {**good, "missing": ["version"]}
+    trial = drills.run_triage(drill, 4, call=canned(unversioned), cfg=cfg, role="role")
+    assert trial["passed"] is False
+    assert drills.describe(trial) == " (kind bug; template needs_info; missing version)"
 
 
 def result(**overrides: Any) -> ResultMessage:
@@ -539,6 +584,7 @@ def trial(
         "passed": passed,
         "reasons": [] if passed else ["x"],
         "unknown": [],
+        "actual": {},
         "model": "m",
         "cost_usd": cost,
         "turns": 1,
@@ -649,7 +695,9 @@ def test_cli_drill_commands(
     assert code == 1  # the canned reply is wrong for the spam drill
     lines = capsys.readouterr().out.splitlines()
     assert "triage bug-confirmed-paypal trial 1: pass" in lines
-    assert "triage spam trial 2: FAIL" in lines
+    assert (
+        "triage spam trial 2: FAIL (kind bug; template needs_info; missing reproducer)"
+    ) in lines
     assert len(drills.read_trials(results)) == 4
     score = tmp_path / "score.json"
     assert (

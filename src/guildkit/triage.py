@@ -30,6 +30,9 @@ MISSING = (
     "reproducer",
 )
 ORACLES = ("confirms", "disagrees", "not_applicable", "not_run", "error")
+# The fields the oracle check reads before it can run: when it says
+# "confirms" or "disagrees", the issue holds them, whatever the model thought.
+ORACLE_FIELDS = frozenset({"code_points", "function", "reproducer"})
 
 Kind = Literal["bug", "feature", "question", "security", "spam", "other"]
 Oracle = Literal["confirms", "disagrees", "not_applicable", "not_run", "error"]
@@ -144,12 +147,18 @@ def apply_policy(output: ModelOutput, oracle: Oracle) -> Record:
     reporter being asked again. A feature is actionable only with the charter
     clause it serves. Security reports, questions, spam and the rest are never
     actionable here: a steward or a template answers them.
+
+    The oracle's verdict outranks the model's reading of the reproducer: when
+    the check ran, the fields it needed are in the text, so the model's doubt
+    about them cannot turn a confirmed bug into a request for information.
     """
     if oracle not in ORACLES:
         raise TriageError(f"oracle {oracle!r}")
     kind = output["kind"]
     clause = output["clause"]
     missing = set(output["missing"])
+    if oracle in ("confirms", "disagrees"):
+        missing -= ORACLE_FIELDS
     severity = output["severity"] if kind == "bug" else "none"
     actionable = False
     template: str
