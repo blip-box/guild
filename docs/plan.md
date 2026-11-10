@@ -250,7 +250,8 @@ harness versions, cost. A weekly sweep audits merged changes.
 - Quality signals in the ledger: how often stewards overrule triage; the
   Reviewer's catch rate and false-veto rate; escaped defects (reverted or fixed
   later); time to first response; cost per merged change; pull request size;
-  the stewards' own review effort.
+  the stewards' own review effort. The first of these is the steward grades
+  (decision 73); the rest are read from GitHub at the retrospective.
 - A monthly retrospective reads transcripts, not only counts, and proposes
   changes to prompts, model choice or caps as drafts a steward commits.
 - Drills: a replay set of past issues and pull requests with known right
@@ -366,7 +367,16 @@ found and what it changed.
 - **Phase 2, shadow.** Create `blip-box/guild` and the shell. Triage posts
   records; the Builder opens draft pull requests; nothing merges without a
   steward; outcomes are graded and seed the first drills. Shadow ends on a
-  count of clean decisions and passing drills, not on a date.
+  count of clean decisions and passing drills, not on a date. The count
+  (decision 73): a steward grades every decision on its issue with
+  `/guild confirm <role>` or `/guild overrule <role>`, the ledger records the
+  grade, and the weekly report counts the latest grade per issue and role
+  against the `[shadow]` table of `guild.toml`. For confusable: ten triage
+  decisions graded with at most two overruled, three builds graded with at
+  most one overruled, three reviews graded with at most one overruled, and
+  the shell's canary passed four weeks in a row; and, at the retrospective,
+  every overruled decision has become a drill that passes. Then a steward
+  ends shadow by hand (`docs/operations.md`).
 - **Phase 3, live.** T1 through steward approval; T2 and T3 rules live;
   the first alpha on PyPI.
 - Each phase ends with a short retrospective before the next begins.
@@ -447,3 +457,4 @@ found and what it changed.
 | 70 | The oracle's verdict outranks the model's reading of the reproducer: when the check ran, the triage policy drops the fields it needed from the model's `missing` list, so a classifier's doubt cannot turn a confirmed bug into a request for information. A negative drill pins what must not happen, as a list of acceptable kinds and templates, not one classification; the first shadow runs showed `claude-haiku-5-5` classing an injection attempt as a bug, spam or other from run to run, all of them safe | Phase 2; from the canary runs of 2026-11-08 |
 | 71 | Nothing a bot opens or writes starts triage: the intake condition tests the issue's author as well as the comment's, so Guild's own issues (the weekly report, a release proposal, a failing scheduled workflow) and Dependabot's are never submissions, whoever comments on them; a dispatched run is a steward's or the batch's choice and skips nothing | Phase 2; the first scheduled weekly report, 2026-11-09, opened its issue as the Triage App and triage classified it |
 | 72 | A closed issue is decided and a `/guild` comment is a command: neither a comment or an edit on a closed issue nor a comment starting with `/guild ` starts triage, the command tested with the literal the build workflow's `command` job uses, so a comment is a command for both workflows or for neither; a dispatched run still skips nothing | Phase 2; before the first real build, whose `/guild build` would have started a triage run on the command's text |
+| 73 | Shadow mode ends on counts a steward can read in the weekly report, not on a judgment call: a steward grades a role's latest decision on an issue with `/guild confirm <role>` or `/guild overrule <role>` (triage, planner, builder, reviewer), the build workflow's command job writes the grade as a ledger entry that copies the decision's model and content hash and costs nothing, and the report counts the latest grade per issue and role against the `[shadow]` table of `guild.toml`, plus the shell's canary passes in a row read from its runs. Confusable's targets: triage 10 graded with at most 2 overruled, builder 3 with at most 1, reviewer 3 with at most 1, canary 4. Every condition met is a line in the report, not an action: a steward holds the retrospective, checks that every overruled decision became a passing drill, ends shadow by hand and removes the table | Phase 2; the first fortnight of shadow showed two triage runs, no build and no graded decision, so the exit had to be made measurable before it could be approached |

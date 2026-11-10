@@ -231,6 +231,31 @@ def test_build_template_makes_two_attempts_at_most() -> None:
     assert text.count("needs.check.outputs.ok == 'true' && 'check' || 'check-2'") == 1
 
 
+def test_build_template_records_grades_and_the_report_counts_them() -> None:
+    """A steward's `/guild confirm` or `/guild overrule` is an entry the ledger
+    job appends, and the report passes the canary's passes to the shell."""
+    build = (ROOT / "templates" / "workflows" / "guild-build.yml").read_text(
+        encoding="ascii"
+    )
+    assert "confirm|overrule)" in build
+    assert "guildkit grade" in build
+    assert "name: entry-steward" in build
+    assert (
+        "if: always() && (needs.intake.result == 'success'"
+        " || needs.command.outputs.graded == 'true')"
+    ) in build
+    ledger_needs = re.search(
+        r"\n  ledger:\n    name: ledger\n    needs: \[([^\]]+)\]", build
+    )
+    assert ledger_needs is not None
+    assert ledger_needs[1].startswith("command, intake")
+    report = (ROOT / "templates" / "workflows" / "guild-report.yml").read_text(
+        encoding="ascii"
+    )
+    assert "--workflow canary.yml" in report
+    assert '--canary-passes "$CANARY_PASSES"' in report
+
+
 def test_release_templates_use_known_placeholders_only() -> None:
     known = {
         "version",

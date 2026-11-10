@@ -247,3 +247,191 @@ def test_report_counts_the_window() -> None:
     assert "Skipped by the brakes: 1. Failed: 1. Second attempts: 1." in text
     assert text.isascii()
     assert "no model wrote any of it" in text
+
+
+def test_grade_names_the_decision_it_grades() -> None:
+    """A grade copies the latest decision's model, attempt, citation and
+    hash, spends nothing and is the steward's."""
+    entries = [
+        entry(at="2026-11-01T00:00:00Z", number=7, outcome="needs_info"),
+        entry(
+            at="2026-11-02T00:00:00Z",
+            number=7,
+            outcome="posted",
+            content_hash="b" * 64,
+            citation="UTS #39 section 4",
+        ),
+        entry(at="2026-11-02T01:00:00Z", number=7, outcome="skipped", model="none"),
+        entry(at="2026-11-03T00:00:00Z", number=8, role="builder", outcome="failed"),
+    ]
+    grade = ledger.grade(
+        entries,
+        number=7,
+        role="triage",
+        verb="overrule",
+        login="atillaguzel",
+        at="2026-11-04T00:00:00Z",
+        harness="guildkit-test",
+    )
+    assert grade["outcome"] == "overruled"
+    assert grade["decided_by"] == "steward"
+    assert grade["decider"] == "atillaguzel"
+    assert grade["content_hash"] == "b" * 64
+    assert grade["citation"] == "UTS #39 section 4"
+    assert grade["model"] == "claude-haiku-5-5"
+    assert grade["cost_usd"] == 0.0
+    assert grade["input_tokens"] == grade["output_tokens"] == 0
+    assert ledger.to_line(grade)
+    # A failed run decided nothing, and a grade is not a decision either.
+    with pytest.raises(ledger.LedgerError, match="nothing to grade"):
+        ledger.grade(
+            entries,
+            number=8,
+            role="builder",
+            verb="confirm",
+            login="a",
+            at="2026-11-04T00:00:00Z",
+            harness="h",
+        )
+    with pytest.raises(ledger.LedgerError, match="nothing to grade"):
+        ledger.grade(
+            [grade],
+            number=7,
+            role="triage",
+            verb="confirm",
+            login="a",
+            at="2026-11-04T00:00:00Z",
+            harness="h",
+        )
+    with pytest.raises(ledger.LedgerError, match="not graded"):
+        ledger.grade(
+            entries,
+            number=7,
+            role="releaser",
+            verb="confirm",
+            login="a",
+            at="2026-11-04T00:00:00Z",
+            harness="h",
+        )
+    with pytest.raises(ledger.LedgerError, match="verb"):
+        ledger.grade(
+            entries,
+            number=7,
+            role="triage",
+            verb="confirmed",
+            login="a",
+            at="2026-11-04T00:00:00Z",
+            harness="h",
+        )
+
+
+def _grade(number: int, role: str, outcome: str, at: str) -> ledger.Entry:
+    return entry(
+        number=number,
+        role=role,
+        outcome=outcome,
+        at=at,
+        decided_by="steward",
+        decider="atillaguzel",
+        cost_usd=0.0,
+        input_tokens=0,
+        output_tokens=0,
+    )
+
+
+def test_shadow_progress_counts_the_latest_grade_per_issue_and_role() -> None:
+    targets: ledger.ShadowConfig = {
+        "canary_passes": 4,
+        "roles": {
+            "triage": {"graded": 3, "overruled_max": 1},
+            "builder": {"graded": 1, "overruled_max": 0},
+        },
+    }
+    entries = [
+        entry(number=1),
+        _grade(1, "triage", "overruled", "2026-11-02T00:00:00Z"),
+        # Regraded: the later grade counts.
+        _grade(1, "triage", "confirmed", "2026-11-03T00:00:00Z"),
+        _grade(2, "triage", "confirmed", "2026-11-03T00:00:00Z"),
+        _grade(3, "triage", "overruled", "2026-11-03T00:00:00Z"),
+        _grade(2, "builder", "overruled", "2026-11-04T00:00:00Z"),
+        # A reviewer grade without a target is counted nowhere.
+        _grade(2, "reviewer", "confirmed", "2026-11-04T00:00:00Z"),
+    ]
+    progress = ledger.shadow_progress(entries, targets, canary_passes=2)
+    assert progress["roles"] == {
+        "builder": {
+            "graded": 1,
+            "graded_target": 1,
+            "overruled": 1,
+            "overruled_max": 0,
+            "met": False,
+        },
+        "triage": {
+            "graded": 3,
+            "graded_target": 3,
+            "overruled": 1,
+            "overruled_max": 1,
+            "met": True,
+        },
+    }
+    assert progress["canary_passes"] == 2
+    assert progress["canary_met"] is False
+    assert (progress["conditions"], progress["conditions_met"]) == (3, 1)
+    assert progress["met"] is False
+    text = ledger.shadow_markdown(progress)
+    assert text.startswith("Shadow mode: 1 of 3 conditions met")
+    assert (
+        "| triage decisions graded | 3, 1 overruled | 3, at most 1 overruled | yes |"
+        in text
+    )
+    assert "| canary passes in a row | 2 | 4 | no |" in text
+    assert "may end shadow mode" not in text
+
+    done = ledger.shadow_progress(
+        [*entries[:-2], _grade(2, "builder", "confirmed", "2026-11-05T00:00:00Z")],
+        targets,
+        canary_passes=4,
+    )
+    assert done["met"] is True
+    assert (
+        "Every condition is met: a steward may end shadow mode"
+        in ledger.shadow_markdown(done)
+    )
+    # No canary target: the canary is not a condition.
+    no_canary = ledger.shadow_progress(
+        entries, {**targets, "canary_passes": 0}, canary_passes=0
+    )
+    assert no_canary["conditions"] == 2
+    assert "canary" not in ledger.shadow_markdown(no_canary)
+
+
+def test_report_counts_grades_and_carries_the_shadow_section() -> None:
+    entries = [
+        entry(at="2026-11-02T00:00:00Z", number=1),
+        _grade(1, "triage", "confirmed", "2026-11-03T00:00:00Z"),
+        _grade(2, "triage", "overruled", "2026-11-03T00:00:00Z"),
+        _grade(2, "builder", "confirmed", "2026-11-04T00:00:00Z"),
+    ]
+    data = ledger.report(entries, since="2026-11-01", until="2026-11-08")
+    assert data["steward_decisions"] == 3
+    assert data["confirmed_by_role"] == {"builder": 1, "triage": 1}
+    assert data["overruled_by_role"] == {"triage": 1}
+    text = ledger.report_markdown(data)
+    assert (
+        "Graded this week: builder 1 confirmed, 0 overruled;"
+        " triage 1 confirmed, 1 overruled." in text
+    )
+    assert "Shadow mode" not in text
+    targets: ledger.ShadowConfig = {
+        "canary_passes": 0,
+        "roles": {"triage": {"graded": 2, "overruled_max": 1}},
+    }
+    progress = ledger.shadow_progress(entries, targets, canary_passes=0)
+    with_shadow = ledger.report_markdown(data, progress)
+    assert "Shadow mode: 1 of 1 conditions met" in with_shadow
+    assert with_shadow.index("Shadow mode") < with_shadow.index(
+        "This report is from Guild"
+    )
+    empty = ledger.report([], since="2026-11-01", until="2026-11-08")
+    assert "Graded this week" not in ledger.report_markdown(empty)

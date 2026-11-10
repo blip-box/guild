@@ -769,11 +769,47 @@ def _cmd_ledger_input(args: argparse.Namespace) -> int:
 
 
 def _cmd_ledger_report(args: argparse.Namespace) -> int:
-    config.load(args.config)
-    data = ledger.report(_read_ledger(args.ledger), since=args.since, until=args.until)
-    args.out.write_text(ledger.report_markdown(data), encoding="ascii")
+    """Count the week, and the whole ledger against the shadow targets."""
+    cfg = config.load(args.config)
+    entries = _read_ledger(args.ledger)
+    data = ledger.report(entries, since=args.since, until=args.until)
+    shadow = None
+    if cfg["shadow"] is not None:
+        shadow = ledger.shadow_progress(
+            entries, cfg["shadow"], canary_passes=args.canary_passes
+        )
+    args.out.write_text(ledger.report_markdown(data, shadow), encoding="ascii")
     if args.json is not None:
-        _write_json(args.json, data)
+        _write_json(args.json, {**data, "shadow": shadow})
+    return 0
+
+
+def _cmd_grade(args: argparse.Namespace) -> int:
+    """Write a steward's grade of a role's latest decision as a ledger entry."""
+    cfg = config.load(args.config)
+    if args.login not in cfg["stewards"]:
+        print(f"{args.login} is not a steward", file=sys.stderr)
+        return 1
+    command = commands.parse(args.body.read_text(encoding="utf-8"))
+    if command is None or command["verb"] not in commands.GRADES:
+        print("no confirm or overrule command", file=sys.stderr)
+        return 1
+    assert command["role"] is not None
+    try:
+        entry = ledger.grade(
+            _read_ledger(args.ledger),
+            number=args.number,
+            role=command["role"],
+            verb=command["verb"],
+            login=args.login,
+            at=args.now or _now(),
+            harness=HARNESS,
+        )
+    except ledger.LedgerError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    _write_json(args.out, entry)
+    print(f"{entry['outcome']} {entry['role']} on #{entry['number']}")
     return 0
 
 
@@ -1090,7 +1126,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--until", required=True, help="YYYY-MM-DD, exclusive")
     p.add_argument("--out", type=Path, required=True, help="the Markdown")
     p.add_argument("--json", type=Path, help="the numbers")
+    p.add_argument(
+        "--canary-passes",
+        type=int,
+        default=0,
+        help="consecutive passes of the shell's canary, for the shadow section",
+    )
     p.set_defaults(func=_cmd_ledger_report)
+    p = sub.add_parser("grade", help="a steward's grade of a decision, as an entry")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--ledger", type=Path, required=True)
+    p.add_argument("--body", type=Path, required=True, help="the comment")
+    p.add_argument("--number", type=int, required=True, help="the issue")
+    p.add_argument("--login", required=True, help="the commenter")
+    p.add_argument("--out", type=Path, required=True, help="the entry")
+    p.add_argument("--now", help=argparse.SUPPRESS)
+    p.set_defaults(func=_cmd_grade)
 
     p = sub.add_parser("config-get", help="print one value of guild.toml")
     p.add_argument("--config", type=Path, required=True)
