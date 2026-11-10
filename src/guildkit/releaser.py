@@ -10,6 +10,14 @@ may reach an issue.
 A release is due when a merged fix or feature touched the library, or when
 the oldest unreleased change is older than `release.stale_days`. The
 proposal is an issue a steward acts on: releases are tier 3.
+
+Two states are not proposals. When the version files at the head already
+name a version newer than the last tag, a steward has merged the bump and
+the tag is on its way: the release is in progress, and nothing is proposed,
+because the push of the bump reaches this script before the tag does (the
+first release under Guild got a second proposal that way). And when nothing
+is due but a proposal is still open, `closing` says how to close it: as
+shipped, when the last tag is the version it proposed, or as no longer due.
 """
 
 from __future__ import annotations
@@ -17,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import date, timedelta
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from guildkit import text, tiers
 from guildkit.config import ReleaseRules
@@ -40,7 +48,7 @@ _REF = re.compile(r"#(\d+)\b")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _VERSION = re.compile(
     r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
-    r"(?:(?P<pre>a|b|rc)(?P<n>\d+))?(?:\.dev\d+)?$"
+    r"(?:(?P<pre>a|b|rc)(?P<n>\d+))?(?:\.dev(?P<dev>\d+))?$"
 )
 _PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 
@@ -72,6 +80,8 @@ class Proposal(TypedDict):
     """The release proposal: numbers, enumerations, identifiers and the reason."""
 
     due: bool
+    # The bump is merged and the tag is not: propose nothing, close nothing.
+    in_progress: bool
     reason: str
     version: str
     previous: str
@@ -139,6 +149,46 @@ def parse_version(value: str) -> Version:
 
 def _format(major: int, minor: int, patch: int, pre: str, n: int) -> str:
     return f"{major}.{minor}.{patch}" + (f"{pre}{n}" if pre else "")
+
+
+# PEP 440 order of the pre-release segments; a final release sorts last.
+_PRE_ORDER = {"a": 0, "b": 1, "rc": 2, "": 3}
+
+
+def version_key(value: str) -> tuple[int, int, int, int, int, int, int]:
+    """Return a sort key for a version or tag, in PEP 440 order.
+
+    A dev release sorts before the release it leads to: 0.1.0.dev0 comes
+    before 0.1.0a1, and 0.1.0a1.dev0 before 0.1.0a1.
+    """
+    match = _VERSION.match(value.strip())
+    if not match:
+        raise ReleaseError(f"version: {value!r}")
+    dev = match["dev"]
+    pre = match["pre"] or ""
+    # A dev release of the final version sits below its first pre-release.
+    pre_rank = _PRE_ORDER[pre] if pre or dev is None else -1
+    return (
+        int(match["major"]),
+        int(match["minor"]),
+        int(match["patch"]),
+        pre_rank,
+        int(match["n"]) if match["n"] else 0,
+        0 if dev is not None else 1,
+        int(dev) if dev is not None else 0,
+    )
+
+
+def in_progress(last_tag: str | None, project_version: str) -> bool:
+    """Return whether the version files are ahead of the last tag.
+
+    A steward has merged the version bump and the tag is still to come:
+    the release is theirs to finish, not the Releaser's to propose again.
+    Without a tag nothing is in progress.
+    """
+    if last_tag is None or not last_tag.strip():
+        return False
+    return version_key(project_version) > version_key(last_tag)
 
 
 def touches(commit: Commit, patterns: list[str]) -> bool:
@@ -275,13 +325,26 @@ def propose(
     major_is_breaking = bool(previous) and parse_version(previous)["major"] >= 1
     kind = bump(commits, major_is_breaking=major_is_breaking)
     version = next_version(previous or None, project_version, kind, rules["prerelease"])
+    pending = in_progress(previous or None, project_version)
+    if pending:
+        v = parse_version(project_version)
+        version = _format(v["major"], v["minor"], v["patch"], v["pre"], v["n"])
+        reason = None
     by_type: dict[str, int] = {}
     for c in commits:
         by_type[c["type"]] = by_type.get(c["type"], 0) + 1
     earliest = date.fromisoformat(today) + timedelta(days=NOTICE_DAYS)
+    if pending:
+        why = (
+            f"the version files already name {version}, newer than {previous}:"
+            " a release is in progress, awaiting its tag"
+        )
+    else:
+        why = reason or "no fix or feature to the library, and nothing stale"
     return {
         "due": reason is not None,
-        "reason": reason or "no fix or feature to the library, and nothing stale",
+        "in_progress": pending,
+        "reason": why,
         "version": version,
         "previous": previous or "(none)",
         "bump": kind,
@@ -336,9 +399,55 @@ def render(
     return fill(title_template, values), fill(body_template, values)
 
 
+_TITLE = re.compile(r"^Release (?P<version>\S+) proposed\s*$")
+
+
+class Closing(TypedDict):
+    """How to close an open proposal when no release is due."""
+
+    why: str
+    reason: Literal["completed", "not planned"]
+
+
+def closing(title: str, *, last_tag: str | None, proposal: Proposal) -> Closing:
+    """Return why and how to close the open proposal `title`.
+
+    Shipped, when the last tag is the version the proposal named; no longer
+    due otherwise, with the Releaser's reason. Not for a due or in-progress
+    run, which keeps the proposal.
+    """
+    if proposal["due"] or proposal["in_progress"]:
+        raise ReleaseError("closing: the proposal stands")
+    match = _TITLE.match(title.strip())
+    proposed = match["version"] if match else ""
+    tag = last_tag.strip() if last_tag and last_tag.strip() else ""
+    if proposed and tag:
+        try:
+            shipped = version_key(proposed) == version_key(tag)
+        except ReleaseError:
+            shipped = False
+        if shipped:
+            return {"why": f"this release shipped as {tag}", "reason": "completed"}
+    return {
+        "why": f"a release is no longer due: {proposal['reason']}",
+        "reason": "not planned",
+    }
+
+
+def render_closing(
+    closing_: Closing, *, template: str, previous: str, run_url: str
+) -> str:
+    """Return the comment that closes the proposal, from the template."""
+    return fill(
+        template, {"why": closing_["why"], "previous": previous, "run_url": run_url}
+    )
+
+
 def markdown(proposal: Proposal) -> str:
     """Return the proposal for a step summary."""
     state = "due" if proposal["due"] else "not due"
+    if proposal["in_progress"]:
+        state = "in progress"
     lines = [
         f"Release {proposal['version']} {state}: {proposal['reason']}.",
         f"Since {proposal['previous']}: {proposal['commits']} commits"

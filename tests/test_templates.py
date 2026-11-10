@@ -270,11 +270,33 @@ def test_release_templates_use_known_placeholders_only() -> None:
         "run_url",
     }
     paths = sorted((ROOT / "templates" / "release").glob("*.md"))
-    assert [p.name for p in paths] == ["proposal.md", "title.md"]
+    assert [p.name for p in paths] == ["closed.md", "proposal.md", "title.md"]
     for path in paths:
         text = path.read_text(encoding="ascii")
         used = set(re.findall(r"\{([a-z_]+)\}", text))
-        assert used <= known, f"{path.name}: {used - known}"
-    body = (ROOT / "templates" / "release" / "proposal.md").read_text(encoding="ascii")
-    assert "no model wrote any of it" in body
-    assert body.rstrip().endswith("Decision record: {run_url}")
+        assert used <= known | {"why"}, f"{path.name}: {used - known}"
+    for name in ("proposal.md", "closed.md"):
+        body = (ROOT / "templates" / "release" / name).read_text(encoding="ascii")
+        assert "no model wrote any of it" in body, name
+        assert body.rstrip().endswith("Decision record: {run_url}"), name
+
+
+def test_release_template_closes_a_stale_proposal_and_keeps_one_in_progress() -> None:
+    """The close job runs only when nothing is due and no release is in
+    progress, and the ledger job runs after it too."""
+    text = (ROOT / "templates" / "workflows" / "guild-release.yml").read_text(
+        encoding="ascii"
+    )
+    assert "in_progress: ${{ steps.release.outputs.in_progress }}" in text
+    assert (
+        "if: needs.propose.outputs.due == 'false'"
+        " && needs.propose.outputs.in_progress == 'false'"
+    ) in text
+    assert "guildkit release-close" in text
+    assert 'gh issue close "$number" --reason "$(cat reason.txt)"' in text
+    assert "--outcome declined" in text
+    assert "needs: [propose, post, close]" in text
+    assert (
+        "if: always() && (needs.post.result == 'success'"
+        " || needs.close.result == 'success')"
+    ) in text

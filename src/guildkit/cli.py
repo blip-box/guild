@@ -670,8 +670,32 @@ def _cmd_release(args: argparse.Namespace) -> int:
     return 0 if proposal["due"] else 4
 
 
+def _cmd_release_close(args: argparse.Namespace) -> int:
+    """Write the comment and the reason that close an open proposal."""
+    proposal = _read_json(args.proposal)
+    try:
+        closing = releaser.closing(
+            args.title.read_text(encoding="utf-8", errors="replace"),
+            last_tag=args.last_tag,
+            proposal=proposal,
+        )
+        comment = releaser.render_closing(
+            closing,
+            template=(args.templates / "closed.md").read_text(encoding="ascii"),
+            previous=str(proposal["previous"]),
+            run_url=args.run_url,
+        )
+    except (releaser.ReleaseError, KeyError) as error:
+        print(f"release-close: {error}", file=sys.stderr)
+        return 2
+    args.out_comment.write_text(comment, encoding="ascii")
+    args.out_reason.write_text(closing["reason"] + "\n", encoding="ascii")
+    print(f"close as {closing['reason']}: {closing['why']}")
+    return 0
+
+
 def _cmd_release_entry(args: argparse.Namespace) -> int:
-    """Write the ledger entry for a posted proposal: no model, no tokens."""
+    """Write the ledger entry for a posted or closed proposal: no model, no tokens."""
     cfg = config.load(args.config)
     proposal = _read_json(args.proposal)
     entry = _entry(
@@ -686,7 +710,7 @@ def _cmd_release_entry(args: argparse.Namespace) -> int:
             "cache_write_tokens": 0,
         },
         cost=0.0,
-        outcome="posted",
+        outcome=args.outcome,
         citation=None,
         decided_by="script",
         decider="",
@@ -1164,12 +1188,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-body", type=Path, required=True)
     p.set_defaults(func=_cmd_release)
 
-    p = sub.add_parser("release-entry", help="the ledger entry for a posted proposal")
+    p = sub.add_parser("release-entry", help="the ledger entry for a proposal")
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--proposal", type=Path, required=True)
     p.add_argument("--number", type=int, required=True, help="the issue")
+    p.add_argument(
+        "--outcome",
+        choices=["posted", "declined"],
+        default="posted",
+        help="posted (opened or rewritten) or declined (closed)",
+    )
     p.add_argument("--out", type=Path, required=True)
     p.set_defaults(func=_cmd_release_entry)
+    p = sub.add_parser("release-close", help="how to close an open proposal")
+    p.add_argument("--title", type=Path, required=True, help="the issue's title")
+    p.add_argument("--last-tag", default="", help="the last v* tag, or empty")
+    p.add_argument("--proposal", type=Path, required=True)
+    p.add_argument("--templates", type=Path, required=True)
+    p.add_argument("--run-url", required=True)
+    p.add_argument("--out-comment", type=Path, required=True)
+    p.add_argument("--out-reason", type=Path, required=True)
+    p.set_defaults(func=_cmd_release_close)
 
     p = sub.add_parser("drill-list", help="list the drills under a directory")
     p.add_argument("--dir", type=Path, required=True)
