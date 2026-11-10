@@ -19,6 +19,11 @@ concurrency:
 jobs:
   title:
     name: pr title
+    # Dependabot writes "Bump ..." with a capital letter and cannot be told
+    # otherwise, so every one of its pull requests failed here while merging
+    # all the same, since only CI's required job is required. Its titles are
+    # mechanical; the check skips them rather than fail them.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read # read the pull request title
