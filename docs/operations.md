@@ -31,7 +31,9 @@ Run it on a quiet day, with an issue of your own, and write the date and the
 outcome in the report issue.
 
 1. Set `GUILD_PAUSED` to `true`. Comment `/guild build` on the issue. Expect:
-   the Guild build workflow runs and its `command` job is skipped.
+   the Guild build workflow runs and its `command` job is skipped. The Guild
+   triage workflow runs too and its `intake` job is skipped, as it is for
+   every `/guild` comment, paused or not.
 2. Clear it. Dispatch the Guild triage workflow for the issue. Expect: a run
    with a triage comment.
 3. Suspend the Triage App. Dispatch again. Expect: the run fails at `post`,
