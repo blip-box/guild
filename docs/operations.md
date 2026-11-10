@@ -117,7 +117,9 @@ steward as decider and no cost. Nothing else runs and nothing is posted; the
 steward's own comment is the visible record. Grade on the issue, not on the
 pull request: the Builder's and the Reviewer's entries carry the issue's
 number, and the workflow ignores comments on pull requests. A later grade on
-the same issue and role replaces the earlier one in the counts.
+the same issue and role replaces the earlier one in the counts. Grades may
+be posted back to back: each runs in a queue of its own, unlike plans and
+builds, which run one per issue at a time.
 
 What the grades mean:
 
