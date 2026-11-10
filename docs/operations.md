@@ -99,6 +99,53 @@ the shell in a pull request and dispatch the canary by hand to confirm.
 Close the issue when it passes. `GUILD_PAUSED` on `blip-box/guild` pauses
 the canary; CI fails while GitHub has disabled the workflow.
 
+## Grading decisions and ending shadow mode
+
+Every decision an agent makes in shadow mode gets a steward's grade, on the
+issue it was made on, as a comment of one line:
+
+```text
+/guild confirm triage
+/guild overrule builder
+```
+
+The role is `triage`, `planner`, `builder` or `reviewer`. The build
+workflow's command job checks that the commenter is a steward, reads the
+public ledger, finds the role's latest decision on that issue and appends a
+ledger entry that copies the decision's model and content hash, with the
+steward as decider and no cost. Nothing else runs and nothing is posted; the
+steward's own comment is the visible record. Grade on the issue, not on the
+pull request: the Builder's and the Reviewer's entries carry the issue's
+number, and the workflow ignores comments on pull requests. A later grade on
+the same issue and role replaces the earlier one in the counts.
+
+What the grades mean:
+
+- `triage`: `confirm` when the kind, the template and the labels are what
+  the steward would have chosen; `overrule` when the steward changed any of
+  them, closed the issue against the record, or answered a request for
+  information that the issue already held.
+- `planner`: `confirm` when the plan was accepted as written or sent back for
+  a reason the Planner could not have known; `overrule` when it missed the
+  scope, the acceptance criteria or the charter.
+- `builder`: `confirm` when the pull request merged as the Builder opened it,
+  or was closed for a reason outside the patch; `overrule` when it was closed
+  for a defect or merged only after a steward's own commits.
+- `reviewer`: `confirm` when every objection named a real defect and the
+  steward found none it missed; `overrule` otherwise, including a verdict of
+  no objection on a patch the steward then fixed.
+
+The weekly report counts the latest grade per issue and role against the
+`[shadow]` table of `guild.toml`, and the shell's weekly canary passes in a
+row, and prints a line per condition. When every condition is met the report
+says so. That line is not an action: a steward holds the phase 2
+retrospective (docs/plan.md, section 13), checks that every overruled
+decision has become a drill that passes, writes the date and the outcome in
+the report issue, removes the `[shadow]` table, and makes the phase 3 changes
+as tier 2 pull requests. An overruled decision is also a drill to write now,
+not at the end: `drills/<repository>/<suite>/`, with the issue's text as the
+input and the steward's answer as the expectation.
+
 ## The release proposal
 
 The release workflow runs after every merge and every Monday. When a merged

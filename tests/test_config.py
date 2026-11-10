@@ -189,3 +189,44 @@ def test_release_rules_default_and_are_checked(example_config: Path) -> None:
         config.parse(text.replace('prerelease = "a"', 'prerelease = "alpha"'))
     with pytest.raises(config.ConfigError, match=re.escape("release.library")):
         config.parse(text.replace('library = ["src/confusable/**"]', "library = [1]"))
+
+
+def test_shadow_targets_are_optional_and_checked(example_config: Path) -> None:
+    """The [shadow] table names the counts that end shadow mode; without it
+    the report has no shadow section."""
+    text = example_config.read_text(encoding="utf-8")
+    cfg = config.parse(text)
+    assert cfg["shadow"] == {
+        "canary_passes": 4,
+        "roles": {
+            "triage": {"graded": 10, "overruled_max": 2},
+            "builder": {"graded": 3, "overruled_max": 1},
+            "reviewer": {"graded": 3, "overruled_max": 1},
+        },
+    }
+    start, end = text.index("[shadow]"), text.index("# US dollars per million")
+    assert config.parse(text[:start] + text[end:])["shadow"] is None
+    only_canary = text[:start] + "[shadow]\ncanary_passes = 2\n" + text[end:]
+    assert config.parse(only_canary)["shadow"] == {"canary_passes": 2, "roles": {}}
+    with pytest.raises(config.ConfigError, match=re.escape("shadow.planner.graded")):
+        config.parse(
+            text[:start]
+            + "[shadow.planner]\ngraded = 0\noverruled_max = 0\n"
+            + text[end:]
+        )
+    with pytest.raises(config.ConfigError, match=re.escape("shadow.steward")):
+        config.parse(
+            text[:start]
+            + "[shadow.steward]\ngraded = 1\noverruled_max = 0\n"
+            + text[end:]
+        )
+    with pytest.raises(config.ConfigError, match=re.escape("shadow.canary_passes")):
+        config.parse(text.replace("canary_passes = 4", "canary_passes = -1"))
+    with pytest.raises(config.ConfigError, match=re.escape("triage.overruled_max")):
+        config.parse(
+            text.replace(
+                "graded = 10\noverruled_max = 2", "graded = 10\noverruled_max = 10"
+            )
+        )
+    with pytest.raises(config.ConfigError, match=re.escape("shadow: no role table")):
+        config.parse(text[:start] + "[shadow]\ncanary_passes = 0\n" + text[end:])

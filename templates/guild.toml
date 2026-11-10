@@ -110,6 +110,27 @@ version_files = ["pyproject.toml", "src/confusable/__init__.py"]
 # the first final release.
 prerelease = "a"
 
+# Shadow mode ends on counts, not on a date (docs/plan.md, decision 73). A
+# steward grades a role's decision on the issue with `/guild confirm <role>`
+# or `/guild overrule <role>`; the weekly report counts the latest grade per
+# issue and role against these targets, and the shell's weekly canary passes
+# in a row. When every condition is met a steward ends shadow mode by hand
+# (docs/operations.md) and removes this table.
+[shadow]
+canary_passes = 4
+
+[shadow.triage]
+graded = 10
+overruled_max = 2
+
+[shadow.builder]
+graded = 3
+overruled_max = 1
+
+[shadow.reviewer]
+graded = 3
+overruled_max = 1
+
 # US dollars per million tokens, Anthropic API list prices, for the ledger.
 # Partner platforms price differently: add their IDs with their prices.
 [models."claude-haiku-5-5"]

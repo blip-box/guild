@@ -4,9 +4,14 @@
 # check who wrote it and rebuild the triage record; agents then work in
 # checkouts that hold no token; plain jobs check what they made and open the
 # pull request. Shadow mode: the pull request is a draft and a steward merges.
+# `/guild confirm <role>` and `/guild overrule <role>` are a steward's grade of
+# the role's latest decision on the issue: the command job writes the ledger
+# entry and nothing else runs. The weekly report counts the grades against
+# the [shadow] targets in guild.toml.
 #
 #   command  no secrets. Parses the comment; checks the author is a steward
-#            in guild.toml and has write permission on the repository.
+#            in guild.toml and has write permission on the repository. For
+#            a grade, reads the public ledger and writes the entry.
 #   intake   no secrets. Snapshot of the issue (not the comment), oracle check.
 #   triage   the model credential. The record, rebuilt; nothing is posted.
 #   plan     the model credential. The Planner, read-only, structured output.
@@ -57,6 +62,7 @@ jobs:
       contents: read # read guild.toml and the pinned shell
     outputs:
       verb: ${{ steps.parse.outputs.verb }}
+      graded: ${{ steps.parse.outputs.graded }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,9 +98,40 @@ jobs:
           printf '%s' "$BODY" > body.md
           verb=$(uv run --project .guild guildkit command --body body.md | jq -r '.verb // empty')
           case "$verb" in
-            plan|build) echo "verb=$verb" >> "$GITHUB_OUTPUT" ;;
-            *) echo "no plan or build command"; echo "verb=" >> "$GITHUB_OUTPUT" ;;
+            plan|build) echo "verb=$verb" >> "$GITHUB_OUTPUT"; echo "graded=false" >> "$GITHUB_OUTPUT" ;;
+            confirm|overrule) echo "verb=" >> "$GITHUB_OUTPUT"; echo "graded=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "no plan, build, confirm or overrule command"; echo "verb=" >> "$GITHUB_OUTPUT"; echo "graded=false" >> "$GITHUB_OUTPUT" ;;
           esac
+      - name: Grade
+        # The steward's verdict on the role's latest decision on this issue,
+        # as a ledger entry that copies the decision's model and content hash.
+        # The ledger is public; reading it needs no App. The entry reaches
+        # the ledger through the ledger job, like every other.
+        if: steps.parse.outputs.graded == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          LOGIN: ${{ github.event.comment.user.login }}
+        run: |
+          gh api "repos/$GH_REPO/contents/ledger.jsonl?ref=guild-ledger" --jq .content 2>/dev/null \
+            | base64 -d > ledger.jsonl || : > ledger.jsonl
+          uv run --project .guild guildkit grade \
+            --config guild.toml --ledger ledger.jsonl --body body.md \
+            --number "$NUMBER" --login "$LOGIN" --out entry-steward.json
+          {
+            echo "## Guild grade"
+            echo
+            echo '```json'
+            cat entry-steward.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.parse.outputs.graded == 'true'
+        with:
+          name: entry-steward
+          path: entry-steward.json
+          retention-days: 90
 
   intake:
     name: intake
@@ -966,8 +1003,9 @@ jobs:
 
   ledger:
     name: ledger
-    needs: [intake, triage, plan, plan-post, build, check, build-2, check-2, build-failed, review, open]
-    if: always() && needs.intake.result == 'success'
+    needs: [command, intake, triage, plan, plan-post, build, check, build-2, check-2, build-failed, review, open]
+    # After a run, or after a grade, whose entry the command job wrote.
+    if: always() && (needs.intake.result == 'success' || needs.command.outputs.graded == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read # check out the pinned shell

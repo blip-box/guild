@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from guildkit.builder import BuildRules
+from guildkit.commands import GRADED_ROLES
+from guildkit.ledger import ShadowConfig, ShadowTarget
 from guildkit.roles import EFFORTS, GRADER, ROLES, Role
 from guildkit.tiers import PathRules, ShapeRules, Tier
 from guildkit.triage import Prices
@@ -67,6 +69,8 @@ class Config(TypedDict):
     second_attempt: AgentConfig | None
     release: ReleaseRules
     prices: dict[str, Prices]
+    # The counts that end shadow mode: None once a steward has ended it.
+    shadow: ShadowConfig | None
 
 
 class ConfigError(ValueError):
@@ -213,6 +217,40 @@ def parse(text: str) -> Config:
     }
     if release["stale_days"] < 1:
         raise ConfigError("release.stale_days: expected at least 1")
+
+    shadow: ShadowConfig | None = None
+    if "shadow" in data:
+        shadow_table = _table(data["shadow"], "shadow")
+        canary = (
+            _get(shadow_table, "canary_passes", int, "shadow")
+            if "canary_passes" in shadow_table
+            else 0
+        )
+        if canary < 0:
+            raise ConfigError("shadow.canary_passes: expected 0 or more")
+        shadow_roles: dict[str, ShadowTarget] = {}
+        for key, value in shadow_table.items():
+            if key == "canary_passes":
+                continue
+            if key not in GRADED_ROLES:
+                raise ConfigError(f"shadow.{key}: not a graded role")
+            role_table = _table(value, f"shadow.{key}")
+            target: ShadowTarget = {
+                "graded": _get(role_table, "graded", int, f"shadow.{key}"),
+                "overruled_max": _get(
+                    role_table, "overruled_max", int, f"shadow.{key}"
+                ),
+            }
+            if target["graded"] < 1:
+                raise ConfigError(f"shadow.{key}.graded: expected at least 1")
+            if not 0 <= target["overruled_max"] < target["graded"]:
+                raise ConfigError(
+                    f"shadow.{key}.overruled_max: expected between 0 and graded - 1"
+                )
+            shadow_roles[key] = target
+        if not shadow_roles and not canary:
+            raise ConfigError("shadow: no role table and no canary_passes")
+        shadow = {"canary_passes": canary, "roles": shadow_roles}
     if release["prerelease"] not in ("", "a", "b", "rc"):
         raise ConfigError("release.prerelease: expected a, b, rc or nothing")
 
@@ -259,6 +297,7 @@ def parse(text: str) -> Config:
         "second_attempt": second_attempt,
         "release": release,
         "prices": prices,
+        "shadow": shadow,
     }
 
 

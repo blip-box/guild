@@ -17,7 +17,7 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, TypedDict
 
-from guildkit.commands import CLAUSE
+from guildkit.commands import CLAUSE, GRADED_ROLES, GRADES
 
 LEDGER_PATH = "ledger.jsonl"
 LEDGER_BRANCH = "guild-ledger"
@@ -35,7 +35,15 @@ OUTCOMES = (
     "failed",
     "paused",
     "skipped",
+    # A steward's grade of a role's decision (`grade`): the entry carries the
+    # graded role, copies the decision's model and content hash, and costs
+    # nothing. The shadow exit counts rest on these (`shadow_progress`).
+    "confirmed",
+    "overruled",
 )
+# The outcomes that are decisions a steward can grade: not a run that never
+# decided (failed, paused, skipped) and not a grade.
+DECISIONS = frozenset(OUTCOMES) - {"failed", "paused", "skipped", *GRADES.values()}
 DECIDERS = ("script", "model", "steward")
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
@@ -174,6 +182,72 @@ def identifier(value: str) -> str:
     return value if _IDENTIFIER.match(value) else ""
 
 
+def grade(
+    entries: Iterable[Entry],
+    *,
+    number: int,
+    role: str,
+    verb: str,
+    login: str,
+    at: str,
+    harness: str,
+) -> Entry:
+    """Return a steward's grade of the latest decision `role` made on `number`.
+
+    `verb` is `confirm` or `overrule`. The grade copies the decision's model,
+    attempt, citation and content hash, so the ledger says what was graded;
+    it spent no tokens, and the steward is the decider. Raises LedgerError
+    when the role never decided anything on the issue.
+    """
+    if role not in GRADED_ROLES:
+        raise LedgerError(f"role: {role!r} is not graded")
+    if verb not in GRADES:
+        raise LedgerError(f"verb: {verb!r}")
+    decisions = [
+        e
+        for e in entries
+        if e["number"] == number
+        and e["role"] == role
+        and e["decided_by"] != "steward"
+        and e["outcome"] in DECISIONS
+    ]
+    if not decisions:
+        raise LedgerError(f"nothing to grade: no {role} decision on #{number}")
+    decision = max(decisions, key=lambda e: e["at"])
+    entry: Entry = {
+        "at": at,
+        "repo": decision["repo"],
+        "number": number,
+        "author": decision["author"],
+        "role": role,
+        "attempt": decision["attempt"],
+        "model": decision["model"],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "outcome": GRADES[verb],
+        "citation": decision["citation"],
+        "decided_by": "steward",
+        "decider": login,
+        "content_hash": decision["content_hash"],
+        "harness": harness,
+    }
+    return validate(dict(entry))
+
+
+def grades(entries: Iterable[Entry]) -> dict[tuple[int, str], Entry]:
+    """Return the latest grade per issue and role, so a steward can regrade."""
+    latest: dict[tuple[int, str], Entry] = {}
+    for e in entries:
+        if e["decided_by"] == "steward" and e["outcome"] in GRADES.values():
+            key = (e["number"], e["role"])
+            if key not in latest or e["at"] > latest[key]["at"]:
+                latest[key] = e
+    return latest
+
+
 def brake(
     entries: Iterable[Entry],
     *,
@@ -261,6 +335,44 @@ class Report(TypedDict):
     skipped: int
     failed: int
     second_attempts: int
+    confirmed_by_role: dict[str, int]
+    overruled_by_role: dict[str, int]
+
+
+class ShadowTarget(TypedDict):
+    """What one role must reach before shadow mode ends."""
+
+    graded: int
+    overruled_max: int
+
+
+class ShadowConfig(TypedDict):
+    """The `[shadow]` table of guild.toml: the counts that end shadow mode."""
+
+    canary_passes: int
+    roles: dict[str, ShadowTarget]
+
+
+class ShadowRole(TypedDict):
+    """One role's progress towards its shadow target."""
+
+    graded: int
+    graded_target: int
+    overruled: int
+    overruled_max: int
+    met: bool
+
+
+class ShadowProgress(TypedDict):
+    """Where shadow mode stands, from the whole ledger."""
+
+    roles: dict[str, ShadowRole]
+    canary_passes: int
+    canary_target: int
+    canary_met: bool
+    conditions: int
+    conditions_met: int
+    met: bool
 
 
 def report(entries: Iterable[Entry], *, since: str, until: str) -> Report:
@@ -270,12 +382,18 @@ def report(entries: Iterable[Entry], *, since: str, until: str) -> Report:
     pairs: Counter[str] = Counter()
     cost: dict[str, float] = {}
     numbers: set[int] = set()
+    confirmed: Counter[str] = Counter()
+    overruled: Counter[str] = Counter()
     runs = tokens_in = tokens_out = cache_read = stewards = second = 0
     for entry in entries:
         day = entry["at"][:10]
         if not since <= day < until:
             continue
         runs += 1
+        if entry["outcome"] == "confirmed":
+            confirmed[entry["role"]] += 1
+        elif entry["outcome"] == "overruled":
+            overruled[entry["role"]] += 1
         roles[entry["role"]] += 1
         outcomes[entry["outcome"]] += 1
         pairs[f"{entry['role']}:{entry['outcome']}"] += 1
@@ -304,10 +422,85 @@ def report(entries: Iterable[Entry], *, since: str, until: str) -> Report:
         "skipped": outcomes["skipped"],
         "failed": outcomes["failed"],
         "second_attempts": second,
+        "confirmed_by_role": dict(sorted(confirmed.items())),
+        "overruled_by_role": dict(sorted(overruled.items())),
     }
 
 
-def report_markdown(data: Report) -> str:
+def shadow_progress(
+    entries: Iterable[Entry], targets: ShadowConfig, *, canary_passes: int
+) -> ShadowProgress:
+    """Count the whole ledger against the `[shadow]` targets.
+
+    A role's condition is met when at least `graded` of its decisions carry a
+    steward's grade and at most `overruled_max` of those are overruled; the
+    latest grade per issue and role counts. The canary condition is met at
+    `canary_passes` consecutive passes. Shadow mode ends when every condition
+    is met, by a steward's hand (docs/operations.md), never by this code.
+    """
+    latest = grades(entries)
+    roles: dict[str, ShadowRole] = {}
+    for role, target in sorted(targets["roles"].items()):
+        graded = sum(1 for (_, r) in latest if r == role)
+        overruled = sum(
+            1
+            for (_, r), e in latest.items()
+            if r == role and e["outcome"] == "overruled"
+        )
+        roles[role] = {
+            "graded": graded,
+            "graded_target": target["graded"],
+            "overruled": overruled,
+            "overruled_max": target["overruled_max"],
+            "met": graded >= target["graded"] and overruled <= target["overruled_max"],
+        }
+    canary_target = targets["canary_passes"]
+    canary_met = canary_passes >= canary_target
+    met = [r["met"] for r in roles.values()]
+    if canary_target:
+        met.append(canary_met)
+    return {
+        "roles": roles,
+        "canary_passes": canary_passes,
+        "canary_target": canary_target,
+        "canary_met": canary_met,
+        "conditions": len(met),
+        "conditions_met": sum(met),
+        "met": all(met),
+    }
+
+
+def shadow_markdown(progress: ShadowProgress) -> str:
+    """Return the shadow section of the weekly report."""
+    lines = [
+        f"Shadow mode: {progress['conditions_met']} of {progress['conditions']}"
+        " conditions met (docs/plan.md, decision 73).",
+        "",
+        "| Condition | Now | Needed | Met |",
+        "|---|---|---|---|",
+    ]
+    for role, r in progress["roles"].items():
+        lines.append(
+            f"| {role} decisions graded | {r['graded']}, {r['overruled']} overruled"
+            f" | {r['graded_target']}, at most {r['overruled_max']} overruled"
+            f" | {'yes' if r['met'] else 'no'} |"
+        )
+    if progress["canary_target"]:
+        canary_met = "yes" if progress["canary_met"] else "no"
+        lines.append(
+            f"| canary passes in a row | {progress['canary_passes']}"
+            f" | {progress['canary_target']} | {canary_met} |"
+        )
+    if progress["met"]:
+        lines += [
+            "",
+            "Every condition is met: a steward may end shadow mode"
+            " (docs/operations.md).",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def report_markdown(data: Report, shadow: ShadowProgress | None = None) -> str:
     """Return the report as the Markdown of the weekly issue comment."""
     lines = [
         f"Guild, {data['since']} to {data['until']}: {data['runs']} runs on"
@@ -333,6 +526,21 @@ def report_markdown(data: Report) -> str:
         f"Steward decisions: {data['steward_decisions']}. Escalated:"
         f" {data['escalated']}. Skipped by the brakes: {data['skipped']}. Failed:"
         f" {data['failed']}. Second attempts: {data['second_attempts']}.",
+    ]
+    if data["confirmed_by_role"] or data["overruled_by_role"]:
+        graded = sorted(set(data["confirmed_by_role"]) | set(data["overruled_by_role"]))
+        lines.append(
+            "Graded this week: "
+            + "; ".join(
+                f"{role} {data['confirmed_by_role'].get(role, 0)} confirmed,"
+                f" {data['overruled_by_role'].get(role, 0)} overruled"
+                for role in graded
+            )
+            + "."
+        )
+    if shadow is not None:
+        lines += ["", shadow_markdown(shadow).rstrip("\n")]
+    lines += [
         "",
         "---",
         "This report is from Guild, the stewards' automation. Every number comes"

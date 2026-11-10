@@ -13,7 +13,9 @@ adopter pins one commit of it.
   `[builder]`, `[reviewer]`), the Builder's second attempt
   (`[builder.second_attempt]`, optional), the release rules (`[release]`:
   the library paths, the staleness, the version files, the pre-release
-  series), and the prices. Tier 2, and on the reject list.
+  series), the counts that end shadow mode (`[shadow]`: the steward grades
+  per role and the canary passes in a row; remove the table when shadow
+  ends), and the prices. Tier 2, and on the reject list.
 - `.github/workflows/guild-triage.yml`, `guild-build.yml`, `guild-batch.yml`,
   `guild-report.yml` and `guild-release.yml`: copied from
   `templates/workflows/`. Workflows are on the reject list: agents draft them,
@@ -125,5 +127,10 @@ While Guild is in shadow, nothing merges without a steward, and nothing is
 automatic beyond triage comments: a steward starts every plan and every build
 with a command, the pull requests are drafts, and the Reviewer's verdict is a
 check run, not a gate. Every decision is graded afterwards and
-seeds the drills. Shadow ends on a count of clean decisions and passing
-drills, not on a date (docs/plan.md, section 13).
+seeds the drills: a steward comments `/guild confirm <role>` or
+`/guild overrule <role>` on the issue (`triage`, `planner`, `builder` or
+`reviewer`), and the ledger records the grade. Shadow ends on a count of
+clean decisions and passing drills, not on a date (docs/plan.md, section 13
+and decision 73): the `[shadow]` table of `guild.toml` holds the targets, and
+the weekly report shows the progress and says when every condition is met.
+`docs/operations.md` says what each grade means and how shadow ends.

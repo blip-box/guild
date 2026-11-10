@@ -2,7 +2,10 @@
 #
 # Every Monday: audit that the guild-ledger branch only ever appended, count
 # the week from the ledger, and post the numbers as a comment on the report
-# issue through the Triage App. Numbers and enumerations only.
+# issue through the Triage App. Numbers and enumerations only. While
+# guild.toml has a [shadow] table, the report also counts the whole ledger
+# against its targets: the steward grades (/guild confirm, /guild overrule)
+# per role and the shell's canary passes in a row.
 #
 # Add this workflow to the `scheduled` job of ci.yml; a failure here opens
 # or comments on an issue, so it never fails silently.
@@ -55,13 +58,34 @@ jobs:
             echo "::error::$removed lines were removed from the ledger in its history"
             exit 1
           fi
+      - name: Count the canary
+        # The shell's weekly canary, for the shadow section: how many of its
+        # latest runs passed in a row. The shell's repository is public, so
+        # this token can list them; when it cannot, the count is 0 and the
+        # report says so, rather than failing.
+        id: canary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passes=0
+          if conclusions=$(gh run list --repo blip-box/guild --workflow canary.yml --status completed --limit 20 --json conclusion --jq '.[].conclusion'); then
+            for c in $conclusions; do
+              [ "$c" = success ] || break
+              passes=$((passes + 1))
+            done
+          else
+            echo "::warning::could not list the canary's runs; counting 0 passes"
+          fi
+          echo "passes=$passes" >> "$GITHUB_OUTPUT"
       - name: Count the week
+        env:
+          CANARY_PASSES: ${{ steps.canary.outputs.passes }}
         run: |
           since=$(date -u -d '7 days ago' +%F)
           until=$(date -u +%F)
           uv run --project .guild guildkit ledger-report \
             --config guild.toml --ledger ledger.jsonl \
-            --since "$since" --until "$until" \
+            --since "$since" --until "$until" --canary-passes "$CANARY_PASSES" \
             --out report.md --json report.json
           {
             echo "## Guild weekly report"

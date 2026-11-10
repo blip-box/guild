@@ -1,4 +1,4 @@
-"""The brake, ledger-input and ledger-report subcommands."""
+"""The brake, ledger-input, ledger-report and grade subcommands."""
 
 import base64
 import json
@@ -168,3 +168,105 @@ def test_ledger_report_command(tmp_path: Path, example_config: Path) -> None:
     assert (
         json.loads(data.read_text(encoding="ascii"))["cost_by_role"]["builder"] == 1.5
     )
+
+
+def test_grade_command(tmp_path: Path, example_config: Path) -> None:
+    """A steward's `/guild overrule triage` becomes an entry; anyone else's,
+    a verdict on nothing, or another command does not."""
+    path = tmp_path / "ledger.jsonl"
+    ledger.append(path, {**ENTRY, "at": "2026-11-01T00:00:00Z", "number": 7})
+    body = tmp_path / "body.md"
+    body.write_text("Wrong kind.\n/guild overrule triage\n", encoding="utf-8")
+    out = tmp_path / "entry-steward.json"
+    args = [
+        "grade",
+        "--config",
+        str(example_config),
+        "--ledger",
+        str(path),
+        "--body",
+        str(body),
+        "--number",
+        "7",
+        "--login",
+        "atillaguzel",
+        "--out",
+        str(out),
+        "--now",
+        "2026-11-05T12:00:00Z",
+    ]
+    assert cli.main(args) == 0
+    entry = ledger.validate(json.loads(out.read_text(encoding="ascii")))
+    assert entry["outcome"] == "overruled"
+    assert entry["decided_by"] == "steward"
+    assert entry["decider"] == "atillaguzel"
+    assert entry["content_hash"] == ENTRY["content_hash"]
+    assert entry["at"] == "2026-11-05T12:00:00Z"
+    assert entry["harness"] == cli.HARNESS
+    out.unlink()
+    assert cli.main([*args[:8], "8", *args[9:]]) == 1  # nothing to grade on #8
+    assert cli.main([*args[:10], "someone", *args[11:]]) == 1  # not a steward
+    body.write_text("/guild build\n", encoding="utf-8")
+    assert cli.main(args) == 1  # not a grade
+    assert not out.exists()
+
+
+def test_ledger_report_carries_the_shadow_section(
+    tmp_path: Path, example_config: Path
+) -> None:
+    path = tmp_path / "ledger.jsonl"
+    ledger.append(path, {**ENTRY, "at": "2026-11-01T00:00:00Z"})
+    ledger.append(
+        path,
+        {
+            **ENTRY,
+            "at": "2026-11-02T00:00:00Z",
+            "outcome": "confirmed",
+            "decided_by": "steward",
+            "decider": "atillaguzel",
+            "cost_usd": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        },
+    )
+    out, data = tmp_path / "report.md", tmp_path / "report.json"
+    args = [
+        "ledger-report",
+        "--config",
+        str(example_config),
+        "--ledger",
+        str(path),
+        "--since",
+        "2026-10-29",
+        "--until",
+        "2026-11-05",
+        "--out",
+        str(out),
+        "--json",
+        str(data),
+        "--canary-passes",
+        "3",
+    ]
+    assert cli.main(args) == 0
+    text = out.read_text(encoding="ascii")
+    assert "Graded this week: triage 1 confirmed, 0 overruled." in text
+    assert "Shadow mode: 0 of 4 conditions met" in text
+    assert (
+        "| triage decisions graded | 1, 0 overruled | 10, at most 2 overruled | no |"
+        in text
+    )
+    assert "| canary passes in a row | 3 | 4 | no |" in text
+    shadow = json.loads(data.read_text(encoding="ascii"))["shadow"]
+    assert shadow["roles"]["triage"]["graded"] == 1
+    assert shadow["canary_passes"] == 3
+    # Without the table, no section and no shadow in the numbers.
+    text_without = example_config.read_text(encoding="utf-8")
+    start, end = (
+        text_without.index("[shadow]"),
+        text_without.index("# US dollars per million"),
+    )
+    plain = tmp_path / "guild.toml"
+    plain.write_text(text_without[:start] + text_without[end:], encoding="utf-8")
+    assert cli.main([*args[:2], str(plain), *args[3:]]) == 0
+    assert "Shadow mode" not in out.read_text(encoding="ascii")
+    assert json.loads(data.read_text(encoding="ascii"))["shadow"] is None

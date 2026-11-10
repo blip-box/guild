@@ -176,7 +176,11 @@ def test_command(tmp_path: Path, capsys: object) -> None:
     body.write_text("/guild reject C-OUT-2\n", encoding="ascii")
     assert cli.main(["command", "--body", str(body)]) == 0
     captured = capsys.readouterr()  # type: ignore[attr-defined]
-    assert json.loads(captured.out) == {"verb": "reject", "clause": "C-OUT-2"}
+    assert json.loads(captured.out) == {
+        "verb": "reject",
+        "clause": "C-OUT-2",
+        "role": None,
+    }
 
 
 def test_triage_without_a_key_fails_cleanly(
