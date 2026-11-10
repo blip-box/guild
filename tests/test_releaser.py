@@ -276,3 +276,156 @@ def test_propose_and_render() -> None:
             tests_exit=0,
             rules=RULES,
         )
+
+
+def test_a_merged_bump_awaiting_its_tag_is_in_progress() -> None:
+    """The push of the version bump reaches the Releaser before the tag does.
+
+    The first release under Guild got a second proposal that way: the bump
+    merged as c1238d0, the run saw v0.1.0a2 as the last tag and proposed
+    0.1.0a3 again, with a checklist to bump a version already bumped.
+    """
+    bump = releaser.parse_log(
+        f"commit\t{SHA[6]}\t2026-11-10T01:43:55+00:00\t"
+        "chore(release): bump the version to 0.1.0a3 (#56)\n\n"
+        "pyproject.toml\nsrc/confusable/__init__.py\n"
+    )
+    feat = releaser.parse_log(
+        f"commit\t{SHA[5]}\t2026-11-10T01:19:00+00:00\t"
+        "feat(compat): add an opt-in install() (#46)\n\n"
+        "src/confusable/compat/homoglyphs/__init__.py\n"
+    )
+    proposal = releaser.propose(
+        bump + feat,
+        entries=[],
+        last_tag="v0.1.0a2",
+        project_version="0.1.0a3",
+        head=SHA[6],
+        today="2026-11-10",
+        tests_exit=0,
+        rules=RULES,
+    )
+    assert proposal["in_progress"] is True
+    assert proposal["due"] is False
+    assert proposal["version"] == "0.1.0a3"
+    assert proposal["reason"] == (
+        "the version files already name 0.1.0a3, newer than v0.1.0a2:"
+        " a release is in progress, awaiting its tag"
+    )
+    assert releaser.markdown(proposal).startswith("Release 0.1.0a3 in progress:")
+    # The same feat before the bump is due, as it was.
+    assert (
+        releaser.propose(
+            feat,
+            entries=[],
+            last_tag="v0.1.0a2",
+            project_version="0.1.0a2",
+            head=SHA[5],
+            today="2026-11-10",
+            tests_exit=0,
+            rules=RULES,
+        )["due"]
+        is True
+    )
+    # Once tagged, nothing is unreleased and nothing is in progress.
+    after = releaser.propose(
+        [],
+        entries=[],
+        last_tag="v0.1.0a3",
+        project_version="0.1.0a3",
+        head=SHA[6],
+        today="2026-11-10",
+        tests_exit=0,
+        rules=RULES,
+    )
+    assert after["in_progress"] is False
+    assert after["due"] is False
+    # Without a tag nothing is in progress; a dev version is not ahead.
+    assert releaser.in_progress("", "0.2.0") is False
+    assert releaser.in_progress("v0.1.0a3", "0.1.0a3.dev0") is False
+    assert releaser.in_progress("v0.1.0a3", "0.1.0") is True
+    assert releaser.in_progress("v0.1.0", "0.1.0rc1") is False
+    assert releaser.in_progress("v0.1.0a1", "0.1.0.dev0") is False
+    assert releaser.version_key("0.1.0a2") < releaser.version_key("0.1.0b1")
+    assert releaser.version_key("0.1.0rc1") < releaser.version_key("0.1.0")
+    assert releaser.version_key("0.1.0.dev0") < releaser.version_key("0.1.0a1")
+    assert releaser.version_key("0.1.0a1.dev0") < releaser.version_key("0.1.0a1")
+    assert releaser.version_key("v0.1.0a1") == releaser.version_key("0.1.0a1")
+    with pytest.raises(releaser.ReleaseError, match="version"):
+        releaser.version_key("1.2")
+
+
+def test_closing_a_stale_proposal() -> None:
+    """Shipped when the last tag is the proposed version, no longer due
+    otherwise; a due or in-progress run keeps the proposal."""
+    after = releaser.propose(
+        [],
+        entries=[],
+        last_tag="v0.1.0a3",
+        project_version="0.1.0a3",
+        head=SHA[6],
+        today="2026-11-10",
+        tests_exit=0,
+        rules=RULES,
+    )
+    shipped = releaser.closing(
+        "Release 0.1.0a3 proposed\n", last_tag="v0.1.0a3", proposal=after
+    )
+    assert shipped == {"why": "this release shipped as v0.1.0a3", "reason": "completed"}
+    stale = releaser.closing(
+        "Release 0.1.0a4 proposed", last_tag="v0.1.0a3", proposal=after
+    )
+    assert stale["reason"] == "not planned"
+    assert stale["why"] == (
+        "a release is no longer due:"
+        " no fix or feature to the library, and nothing stale"
+    )
+    odd = releaser.closing("Something else", last_tag="v0.1.0a3", proposal=after)
+    assert odd["reason"] == "not planned"
+    assert (
+        releaser.closing(
+            "Release nonsense proposed", last_tag="v0.1.0a3", proposal=after
+        )["reason"]
+        == "not planned"
+    )
+    template = (ROOT / "templates" / "release" / "closed.md").read_text(
+        encoding="ascii"
+    )
+    comment = releaser.render_closing(
+        shipped,
+        template=template,
+        previous=after["previous"],
+        run_url="https://example.invalid/run",
+    )
+    assert comment.startswith(
+        "Guild closes this proposal: this release shipped as v0.1.0a3."
+        " The last release is v0.1.0a3."
+    )
+    assert comment.rstrip().endswith("Decision record: https://example.invalid/run")
+    assert comment.isascii()
+    due = releaser.propose(
+        releaser.parse_log(LOG),
+        entries=[],
+        last_tag="",
+        project_version="0.1.0.dev0",
+        head=SHA[1],
+        today="2026-11-05",
+        tests_exit=0,
+        rules=RULES,
+    )
+    with pytest.raises(releaser.ReleaseError, match="the proposal stands"):
+        releaser.closing("Release 0.1.0a1 proposed", last_tag="", proposal=due)
+    pending = releaser.propose(
+        [],
+        entries=[],
+        last_tag="v0.1.0a2",
+        project_version="0.1.0a3",
+        head=SHA[6],
+        today="2026-11-10",
+        tests_exit=0,
+        rules=RULES,
+    )
+    with pytest.raises(releaser.ReleaseError, match="the proposal stands"):
+        releaser.closing(
+            "Release 0.1.0a3 proposed", last_tag="v0.1.0a2", proposal=pending
+        )

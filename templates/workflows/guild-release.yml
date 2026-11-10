@@ -8,6 +8,12 @@
 # pull request titles and the credits come from the ledger. A steward
 # approves and runs the release; releases are tier 3.
 #
+# When the version files already name a version newer than the last tag, a
+# steward has merged the bump and the tag is on its way: nothing is proposed
+# and nothing is closed. When nothing is due and a proposal is still open,
+# the close job closes it: as completed when the last tag is the version it
+# proposed, as not planned otherwise, with a templated comment.
+#
 # Add this workflow to the `scheduled` job of ci.yml; a failure here opens
 # or comments on an issue, so it never fails silently.
 name: Guild release
@@ -36,6 +42,8 @@ jobs:
       issues: write # report a failure
     outputs:
       due: ${{ steps.release.outputs.due }}
+      in_progress: ${{ steps.release.outputs.in_progress }}
+      tag: ${{ steps.log.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,6 +113,7 @@ jobs:
           # 4 is "not due"; anything else is an error.
           case "$status" in 0) due=true ;; 4) due=false ;; *) exit "$status" ;; esac
           echo "due=$due" >> "$GITHUB_OUTPUT"
+          echo "in_progress=$(jq -r .in_progress "$RUNNER_TEMP/out/proposal.json")" >> "$GITHUB_OUTPUT"
           {
             echo "## Guild release"
             echo
@@ -198,10 +207,76 @@ jobs:
           path: entry-releaser.json
           retention-days: 90
 
+  close:
+    name: close a stale proposal
+    needs: propose
+    # Nothing due and no release in progress: an open proposal is stale,
+    # shipped or no longer due. Nothing to do when none is open.
+    if: needs.propose.outputs.due == 'false' && needs.propose.outputs.in_progress == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # guild.toml and the pinned shell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: guild.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blip-box/guild
+          ref: ${{ vars.GUILDKIT_REF }}
+          path: .guild
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked --no-default-groups --project .guild
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.GUILD_TRIAGE_CLIENT_ID }}
+          private-key: ${{ secrets.GUILD_TRIAGE_APP_KEY }}
+          permission-issues: write
+      - name: Close the open proposal
+        # The title is Guild's own text, read back through a file all the
+        # same; the comment comes from a template.
+        id: close
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.propose.outputs.tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          number=$(gh issue list --state open --label "guild:release" --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            echo "no open proposal"
+            echo "closed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh issue view "$number" --json title --jq .title > title.txt
+          uv run --project .guild guildkit release-close \
+            --title title.txt --last-tag "$TAG" --proposal proposal.json \
+            --templates .guild/templates/release --run-url "$RUN_URL" \
+            --out-comment comment.md --out-reason reason.txt
+          gh issue comment "$number" --body-file comment.md
+          gh issue close "$number" --reason "$(cat reason.txt)"
+          uv run --project .guild guildkit release-entry \
+            --config guild.toml --proposal proposal.json \
+            --number "$number" --outcome declined --out entry-releaser.json
+          echo "closed=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.close.outputs.closed == 'true'
+        with:
+          name: entry-releaser
+          path: entry-releaser.json
+          retention-days: 90
+
   ledger:
     name: ledger
-    needs: [propose, post]
-    if: always() && needs.post.result == 'success'
+    needs: [propose, post, close]
+    if: always() && (needs.post.result == 'success' || needs.close.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read # check out the pinned shell

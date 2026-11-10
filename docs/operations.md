@@ -163,3 +163,12 @@ the files the issue names, merges that as tier 2, tags the merge commit
 environment; closing the issue with the tag ends the proposal, and Guild
 proposes the next release from there. A proposal nobody wants is closed with
 a comment; the next run opens a new one when a release is due again.
+
+Between the bump and the tag the release is in progress: the merge of the
+bump starts a run that sees the old tag, and that run proposes nothing,
+because the version files are already ahead of it. If a proposal is still
+open when a run finds nothing due and nothing in progress, the run closes
+it with a templated comment: as completed when the last tag is the version
+it proposed, as not planned otherwise. The first release under Guild got a
+second proposal from that race, before the rule existed; closing such an
+issue by hand triggers nothing.
