@@ -134,6 +134,30 @@ def test_triage_intake_skips_what_bots_open_and_write() -> None:
     assert "github.event_name == 'workflow_dispatch'" in condition[1]
 
 
+def test_triage_intake_skips_closed_issues_and_commands() -> None:
+    """A closed issue is decided, and a `/guild` comment is a command.
+
+    Without these, a steward's `/guild build` started a triage run on the
+    command's text next to the build, and any comment on a closed issue
+    brought the templated reply back.
+    """
+    text = (ROOT / "templates" / "workflows" / "guild-triage.yml").read_text(
+        encoding="ascii"
+    )
+    jobs = text[text.index("\njobs:\n") :]
+    intake = re.search(r"\n  intake:\n(.*?)\n    runs-on:", jobs, re.S)
+    assert intake is not None
+    assert "github.event.issue.state == 'open'" in intake[1]
+    command = "startsWith(github.event.comment.body, '/guild ')"
+    assert f"!{command}" in intake[1]
+    # The same literal the build workflow's command job tests, so a comment
+    # is a command for one workflow exactly when it is for the other.
+    build = (ROOT / "templates" / "workflows" / "guild-build.yml").read_text(
+        encoding="ascii"
+    )
+    assert f"&& {command}" in build
+
+
 def test_scheduled_workflows_pause_and_are_watched_by_ci() -> None:
     """A scheduled workflow stops on GUILD_PAUSED, and CI fails while it is disabled."""
     scheduled = [

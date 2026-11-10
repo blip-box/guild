@@ -54,11 +54,14 @@ concurrency:
 jobs:
   intake:
     name: intake
-    # Not paused, not a pull request, not an issue a bot opened, not a bot's
-    # comment. Guild's own issues (the weekly report, a release proposal, a
-    # failing scheduled workflow) are opened by the Triage App or by Actions,
-    # and Dependabot's by Dependabot: none is a submission, whoever comments
-    # on it. A dispatched run is a steward's or the batch's choice.
+    # Not paused, not a pull request, not an issue a bot opened, not a closed
+    # issue, not a bot's comment, not a command. Guild's own issues (the
+    # weekly report, a release proposal, a failing scheduled workflow) are
+    # opened by the Triage App or by Actions, and Dependabot's by Dependabot:
+    # none is a submission, whoever comments on it. A closed issue is decided;
+    # a comment or an edit there is for the people in it. A `/guild` comment
+    # is a command for the build workflow, whoever wrote it, not a submission.
+    # A dispatched run is a steward's or the batch's choice and skips nothing.
     if: >-
       vars.GUILD_PAUSED != 'true'
       && (
@@ -66,7 +69,14 @@ jobs:
         || (
           github.event.issue.pull_request == null
           && github.event.issue.user.type != 'Bot'
-          && (github.event_name == 'issues' || github.event.comment.user.type != 'Bot')
+          && github.event.issue.state == 'open'
+          && (
+            github.event_name == 'issues'
+            || (
+              github.event.comment.user.type != 'Bot'
+              && !startsWith(github.event.comment.body, '/guild ')
+            )
+          )
         )
       )
     runs-on: ubuntu-latest

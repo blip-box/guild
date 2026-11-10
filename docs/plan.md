@@ -118,9 +118,10 @@ the oracle agrees with the current output, triage labels "spec disagrees" and
 posts the citation; a steward closes, because oracles are sometimes wrong
 (seven ICU patches so far). Features are judged against charter clauses by ID.
 
-Brakes: triage starts within minutes of a new issue or comment; at most three
-triaged items per outside author per day; a daily cap on triage runs; batch
-mode twice a day once the cap is hit.
+Brakes: triage starts within minutes of a new issue or a comment on an open
+one (a `/guild` command excepted; decision 72); at most three triaged items
+per outside author per day; a daily cap on triage runs; batch mode twice a
+day once the cap is hit.
 
 ## 5. Risk tiers
 
@@ -445,3 +446,4 @@ found and what it changed.
 | 69 | The shell's own repository mirrors the adopter's merge policy: branch protection on `main` requires only CI's `required` job, and Dependabot's non-major updates auto-merge except Anthropic or Claude tooling, which a human reviews first | Phase 2 |
 | 70 | The oracle's verdict outranks the model's reading of the reproducer: when the check ran, the triage policy drops the fields it needed from the model's `missing` list, so a classifier's doubt cannot turn a confirmed bug into a request for information. A negative drill pins what must not happen, as a list of acceptable kinds and templates, not one classification; the first shadow runs showed `claude-haiku-5-5` classing an injection attempt as a bug, spam or other from run to run, all of them safe | Phase 2; from the canary runs of 2026-11-08 |
 | 71 | Nothing a bot opens or writes starts triage: the intake condition tests the issue's author as well as the comment's, so Guild's own issues (the weekly report, a release proposal, a failing scheduled workflow) and Dependabot's are never submissions, whoever comments on them; a dispatched run is a steward's or the batch's choice and skips nothing | Phase 2; the first scheduled weekly report, 2026-11-09, opened its issue as the Triage App and triage classified it |
+| 72 | A closed issue is decided and a `/guild` comment is a command: neither a comment or an edit on a closed issue nor a comment starting with `/guild ` starts triage, the command tested with the literal the build workflow's `command` job uses, so a comment is a command for both workflows or for neither; a dispatched run still skips nothing | Phase 2; before the first real build, whose `/guild build` would have started a triage run on the command's text |
