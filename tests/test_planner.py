@@ -1,9 +1,12 @@
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from guildkit import planner
 from tests.test_brief import RECORD, SNAP
+
+ROOT = Path(__file__).resolve().parents[1]
 
 KINDS = ["public_api", "spec_departure", "new_data_source", "release", "advisory"]
 GOOD: dict[str, Any] = {
@@ -103,3 +106,15 @@ def test_prompt_and_markdown() -> None:
     assert "Acceptance criteria:\n- the test passes" in text
     assert "Questions" not in text
     assert text.isascii()
+
+
+def test_prompt_states_the_limits_the_code_cuts_at() -> None:
+    """The Planner writes to fit only if it knows the limits.
+
+    The first real plan had four of its seven steps cut mid-word at 300
+    characters, one of them losing the expected values it listed, because
+    the prompt never said there was a limit.
+    """
+    prompt = (ROOT / "roles" / "planner.md").read_text(encoding="ascii")
+    assert f"at most {planner.SUMMARY_LIMIT} characters" in prompt
+    assert f"at most {planner.ITEM_LIMIT}" in prompt
