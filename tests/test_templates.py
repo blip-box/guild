@@ -256,6 +256,24 @@ def test_build_template_records_grades_and_the_report_counts_them() -> None:
     assert '--canary-passes "$CANARY_PASSES"' in report
 
 
+def test_grades_do_not_queue_behind_each_other() -> None:
+    """A grade comment gets its own concurrency group, keyed by the comment.
+
+    GitHub keeps one waiting run per group and cancels the rest; three
+    grades posted within a minute on confusable #61 lost the middle one.
+    """
+    text = (ROOT / "templates" / "workflows" / "guild-build.yml").read_text(
+        encoding="ascii"
+    )
+    group = re.search(r"\nconcurrency:\n  group: (.*)\n", text)
+    assert group is not None
+    assert group[1].startswith("guild-build-${{ github.event.issue.number }}")
+    assert "startsWith(github.event.comment.body, '/guild confirm ')" in group[1]
+    assert "startsWith(github.event.comment.body, '/guild overrule ')" in group[1]
+    assert "format('-{0}', github.event.comment.id)" in group[1]
+    assert "cancel-in-progress: false" in text
+
+
 def test_release_templates_use_known_placeholders_only() -> None:
     known = {
         "version",

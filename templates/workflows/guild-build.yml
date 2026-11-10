@@ -45,8 +45,14 @@ on:
 
 permissions: {}
 
+# One plan or build per issue at a time; later ones wait rather than cancel.
+# A grade (/guild confirm, /guild overrule) gets a group of its own, keyed by
+# the comment: GitHub keeps one waiting run per group and cancels the rest,
+# and the first three grades on an issue, posted within a minute, lost the
+# middle one that way. A grade writes one ledger entry and the ledger job
+# retries a racing append, so grades may run side by side.
 concurrency:
-  group: guild-build-${{ github.event.issue.number }}
+  group: guild-build-${{ github.event.issue.number }}${{ (startsWith(github.event.comment.body, '/guild confirm ') || startsWith(github.event.comment.body, '/guild overrule ')) && format('-{0}', github.event.comment.id) || '' }}
   cancel-in-progress: false
 
 jobs:
