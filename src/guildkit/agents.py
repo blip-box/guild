@@ -460,9 +460,11 @@ def options(
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "DISABLE_TELEMETRY": "1",
             "DISABLE_AUTOUPDATER": "1",
-            # Where sandboxed commands may write besides the checkout.
+            # Where sandboxed commands may write besides the checkout, and
+            # the checkout's own environment, not the job's.
             "UV_CACHE_DIR": str(uv_cache),
             "TMPDIR": str(tmp),
+            "VIRTUAL_ENV": str(root / ".venv"),
             # Only the subagents defined here exist, one level deep, few at
             # a time: a tree of agents is not a Builder.
             "CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS": "1",

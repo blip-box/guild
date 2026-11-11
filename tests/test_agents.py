@@ -300,6 +300,7 @@ def test_options_give_the_sdk_nothing_from_disk(checkout: Path, tmp_path: Path) 
     assert sandbox == agents.SANDBOX
     assert opts.env["UV_CACHE_DIR"] == str(tmp_path / "cfg" / "uv-cache")
     assert opts.env["TMPDIR"] == str(tmp_path / "cfg" / "tmp")
+    assert opts.env["VIRTUAL_ENV"] == str(checkout / ".venv")
     assert (tmp_path / "cfg" / "uv-cache").is_dir()
     assert agents.SANDBOX["enabled"] is True
     assert agents.SANDBOX["allowUnsandboxedCommands"] is False
