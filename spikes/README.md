@@ -3,10 +3,14 @@
 Hand-run probes for `docs/ab-experiment-plan.md`, M0. Nothing here runs
 in CI on its own, and nothing here is merged as a feature.
 
-1. `sandbox_probe.py` with `.github/workflows/spike-sandbox.yml`: does the
-   Bash sandbox start on `ubuntu-latest` and block egress? Dispatch the
-   workflow; the step summary shows the curl exit code. Pass: curl fails
-   and the run ends with subtype `success`.
+1. `sandbox_probe.py`, run by the Drills workflow's `sandbox` suite: does
+   the Bash sandbox start on `ubuntu-latest` and block egress? The suite is
+   there because a workflow is only dispatchable once it exists on the
+   default branch, and this one runs from the spike branch. Dispatch it;
+   the step summary shows the curl exit code. Pass: curl fails and the run
+   ends with subtype `success`.
+
+       gh workflow run drills.yml --ref spike/m0 -f suite=sandbox
 2. `cloud-task/`: one Claude Code scheduled task fired by curl against a
    scratch repository. `README.md` there has the steps.
 3. `systemone_probe.py`: one Jev call and one OpenAI Decisions call with a
