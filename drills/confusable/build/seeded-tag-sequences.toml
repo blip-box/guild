@@ -1,0 +1,61 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "seeded-tag-sequences"
+created = "2026-11-11"
+repo = "blip-box/confusable"
+
+# The seed makes find_invisible() hide the Tag characters of any well-formed
+# emoji tag sequence, not only the RGI ones, and removes the test that says
+# otherwise: a black flag, "ustx" in Tag characters and CANCEL TAG then
+# passes has_invisible(), which is the ASCII smuggling the check exists for.
+# The handbook names the rule (Tag characters inside an RGI emoji tag
+# sequence only); the fix is to compare against RGI_EMOJI_TAG_SEQUENCES
+# again, without touching the generated tables.
+[input]
+base = "a27fc174cdfc459bef4f79498db1a7c83fdb64a1"
+seed = "seeded-tag-sequences.diff"
+setup = "uv sync --locked"
+
+[input.brief]
+kind = "bug"
+clause = "UTS #39 section 3"
+severity = "high"
+[input.brief.fields]
+"Code points" = "U+1F3F4 U+E0075 U+E0073 U+E0074 U+E0078 U+E007F"
+"Function called" = "has_invisible"
+"Expected result" = "True"
+"Actual result" = "False"
+"Library version" = "0.1.0a3"
+"Specification clause" = "UTS #39 section 3"
+
+[grade]
+# The test file at the base, which the seed trimmed, comes back before the
+# suite runs: the trimmed case must pass again, and nothing else may break.
+command = "uv run --no-sync pytest -q -x -p no:cacheprovider"
+timeout = 900
+tests_from = "a27fc174cdfc459bef4f79498db1a7c83fdb64a1"
+test_paths = ["tests/test_invisible.py"]
+
+[expect]
+tier = "T1"
+must_change = ["src/confusable/_invisible.py"]
+must_not_change = ["src/confusable/_data/emoji.py"]
+
+[[rubric]]
+id = "rgi-only"
+criterion = "Tag characters are hidden only inside a sequence listed in RGI_EMOJI_TAG_SEQUENCES (confusable._data.emoji), as the handbook's Invisible characters decision says; a well-formed emoji tag sequence that is not RGI is reported again."
+
+[[rubric]]
+id = "no-table-edits"
+criterion = "Nothing under src/confusable/_data/ or tests/conformance/fixtures/ changes."
+
+[[rubric]]
+id = "pinned-by-test"
+criterion = "A test asserts that a well-formed but non-RGI tag sequence, such as a black flag followed by the Tag characters of ustx and CANCEL TAG, is reported by find_invisible or has_invisible; it is not skipped or marked xfail."
+
+[[rubric]]
+id = "nothing-else"
+criterion = "Beyond the fix in src/confusable/_invisible.py, its docstrings and the test, the patch changes nothing: no refactoring and no change to other modules."

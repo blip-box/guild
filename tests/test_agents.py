@@ -14,6 +14,7 @@ from claude_agent_sdk import (
 )
 
 from guildkit import agents
+from guildkit.roles import Role
 
 REJECT = [".github/**", "AGENTS.md", "guild.toml", "conftest.py"]
 PRICES = {
@@ -71,7 +72,19 @@ def decision(output: dict[str, Any]) -> str:
         ("Bash", {"command": "python -c 'import socket'"}, "command refused"),
         ("Bash", {}, "no command"),
         ("WebFetch", {"url": "https://x"}, "tool not allowed for this role"),
-        ("Agent", {"prompt": "x"}, "tool not allowed for this role"),
+        ("Agent", {"prompt": "x"}, "unknown subagent"),
+        (
+            "Agent",
+            {"prompt": "x", "subagent_type": "general-purpose"},
+            "unknown subagent",
+        ),
+        ("Agent", {"prompt": "x", "subagent_type": "fork"}, "unknown subagent"),
+        ("Agent", {"prompt": "x", "subagent_type": "explorer"}, None),
+        ("Task", {"prompt": "x", "subagent_type": "runner"}, None),
+        ("Skill", {"skill": "guild:escape-check"}, None),
+        ("Skill", {"skill": "escape-check"}, "unknown skill"),
+        ("Skill", {"skill": "code-review"}, "unknown skill"),
+        ("TodoWrite", {"todos": []}, "tool not allowed for this role"),
     ],
 )
 def test_builder_gate_reasons(
@@ -93,6 +106,20 @@ def test_read_only_roles_cannot_write(checkout: Path) -> None:
         )
         == "tool not allowed for this role"
     )
+    # Delegation and skills are the Builder's alone.
+    readers: tuple[Role, ...] = ("planner", "reviewer", "grader")
+    for role in readers:
+        gate = agents.Gate(checkout, role=role, reject=REJECT)
+        assert (
+            gate.reason("Agent", {"prompt": "x", "subagent_type": "explorer"})
+            == "tool not allowed for this role"
+        )
+        assert (
+            gate.reason("Skill", {"skill": "guild:escape-check"})
+            == "tool not allowed for this role"
+        )
+        assert "Agent" in agents.never(role)
+        assert "Skill" in agents.never(role)
     assert (
         agents.Gate(checkout, role="grader", reject=REJECT).reason(
             "Bash", {"command": "uv run --no-sync pytest"}
@@ -214,12 +241,38 @@ def test_options_give_the_sdk_nothing_from_disk(checkout: Path, tmp_path: Path) 
         tests=tests,
     )
     assert opts.setting_sources == []
-    assert opts.skills == []
+    assert opts.skills == ["guild:escape-check"]
     assert opts.strict_mcp_config is True
     assert opts.mcp_servers == {}
-    assert opts.tools == ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+    assert opts.tools == [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash",
+        "Agent",
+        "Skill",
+    ]
     assert "WebFetch" in opts.disallowed_tools
     assert opts.allowed_tools == []
+    # The Builder's delegation: its own subagents, one level deep, no fork,
+    # no built-in agents; its skills from the package's own plugin.
+    assert opts.disallowed_tools == agents.never("builder")
+    assert "Agent(fork)" in opts.disallowed_tools
+    assert not {"Agent", "Task", "Skill"} & set(opts.disallowed_tools)
+    assert opts.agents is not None
+    assert set(opts.agents) == {"explorer", "runner"}
+    assert opts.agents["explorer"].tools == ["Read", "Glob", "Grep"]
+    assert opts.agents["runner"].tools == ["Bash", "Read", "Glob", "Grep"]
+    for definition in opts.agents.values():
+        assert set(definition.tools or []) <= set(agents.TOOLS["builder"])
+        assert definition.model == "inherit"
+    assert opts.plugins == [{"type": "local", "path": str(agents.PLUGIN_DIR)}]
+    assert (agents.PLUGIN_DIR / "skills" / "escape-check" / "SKILL.md").is_file()
+    assert opts.skills == ["guild:escape-check"]
+    assert opts.env["CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS"] == "1"
+    assert opts.env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "1"
     assert opts.permission_mode == "default"
     assert opts.can_use_tool == gate.can_use_tool
     assert opts.verbatim_prompts is True
@@ -444,3 +497,38 @@ def test_succeeded_needs_a_clean_end_and_green_tests(
     assert not agents.succeeded(record)
     gate.repeated = True
     assert not agents.succeeded(run_with(result()))
+
+
+def test_reader_roles_get_no_delegation_or_skills(
+    checkout: Path, tmp_path: Path
+) -> None:
+    readers: tuple[Role, ...] = ("planner", "reviewer", "grader")
+    for role in readers:
+        gate = agents.Gate(checkout, role=role, reject=REJECT)
+        opts = agents.options(
+            root=checkout,
+            config_dir=tmp_path / "cfg",
+            system_prompt="read",
+            role=role,
+            model="claude-opus-5-5",
+            max_turns=5,
+            cap_usd=1.0,
+            effort="low",
+            gate=gate,
+        )
+        assert opts.agents is None
+        assert opts.plugins == []
+        assert opts.skills == []
+        assert "Agent" in opts.disallowed_tools
+        assert "Skill" in opts.disallowed_tools
+        assert isinstance(opts.tools, list)
+        assert "Agent" not in opts.tools
+
+
+def test_the_plugin_skill_is_named_as_the_builder_may_invoke_it() -> None:
+    text = (agents.PLUGIN_DIR / "skills" / "escape-check" / "SKILL.md").read_text(
+        encoding="ascii"
+    )
+    assert text.startswith("---\nname: escape-check\n")
+    assert agents.SKILLS == ("guild:escape-check",)
+    assert agents.PLUGIN_DIR.name == "guild"

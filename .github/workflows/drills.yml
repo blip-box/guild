@@ -302,12 +302,19 @@ jobs:
           [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
           status=0
           uv run --no-sync python spikes/sandbox_probe.py > "$RUNNER_TEMP/probe.log" || status=$?
+          uv run --no-sync python spikes/subagent_probe.py > "$RUNNER_TEMP/subagent.log" || status=$?
           {
             echo "## Spike: sandbox"
             echo
             echo '```'
             cat "$RUNNER_TEMP/probe.log"
             echo '```'
+            echo
+            echo "## M2: subagents, skill, gate"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/subagent.log"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          cat "$RUNNER_TEMP/probe.log"
+          cat "$RUNNER_TEMP/probe.log" "$RUNNER_TEMP/subagent.log"
           exit "$status"

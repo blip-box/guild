@@ -29,6 +29,12 @@ in CI on its own, and nothing here is merged as a feature.
    (run 42991205128) and Ubuntu 26.04's `bwrap-userns-restrict` AppArmor
    profile, which left the sandbox's seccomp helper without capabilities
    in its nested namespace (run 43005981086).
+   `subagent_probe.py` runs in the same job, for M2: one Builder turn with
+   the plugin, the skill and the two subagents on, asking for a read
+   outside the checkout through the explorer, a network command through
+   the runner and the skill; pass is the plugin and skill listed, the
+   read refused inside the subagent, no network in the runner, and
+   subtype `success`.
 2. `cloud-task/`: one Claude Code scheduled task fired by curl against a
    scratch repository. `README.md` there has the steps.
 3. `systemone_probe.py`: one Jev call and one OpenAI Decisions call with a

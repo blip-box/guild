@@ -1,0 +1,59 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "seeded-mark-count"
+created = "2026-11-11"
+repo = "blip-box/confusable"
+
+# The seed raises MAX_NONSPACING_MARKS from four to five with a comment that
+# misreads UTS #39 section 5.4 (counting a precomposed letter's own mark as
+# one of the four), and trims the two test cases that say otherwise: five
+# marks on a base, and a precomposed letter plus three. The fix is the
+# constant and its comment, with a test; the module already counts in NFD.
+[input]
+base = "a27fc174cdfc459bef4f79498db1a7c83fdb64a1"
+seed = "seeded-mark-count.diff"
+setup = "uv sync --locked"
+
+[input.brief]
+kind = "bug"
+clause = "UTS #39 section 5.4"
+severity = "medium"
+[input.brief.fields]
+"Code points" = "U+007A U+0300 U+0301 U+0302 U+0303 U+0304"
+"Function called" = "has_unlikely_marks"
+"Expected result" = "True"
+"Actual result" = "False"
+"Library version" = "0.1.0a3"
+"Specification clause" = "UTS #39 section 5.4"
+
+[grade]
+# The test file at the base, which the seed trimmed, comes back before the
+# suite runs: the trimmed cases must pass again, and nothing else may break.
+command = "uv run --no-sync pytest -q -x -p no:cacheprovider"
+timeout = 900
+tests_from = "a27fc174cdfc459bef4f79498db1a7c83fdb64a1"
+test_paths = ["tests/test_marks.py"]
+
+[expect]
+tier = "T1"
+must_change = ["src/confusable/_marks.py"]
+must_not_change = ["src/confusable/_normalize.py"]
+
+[[rubric]]
+id = "threshold-four"
+criterion = "MAX_NONSPACING_MARKS in src/confusable/_marks.py is 4 again, and its comment states UTS #39 section 5.4's rule (more than four nonspacing marks) without the wrong counting rule the seed added."
+
+[[rubric]]
+id = "nfd-counted"
+criterion = "The run of marks is still counted in the NFD form, so a precomposed letter's own marks count toward the four, as the module's docstring says."
+
+[[rubric]]
+id = "pinned-by-test"
+criterion = "A test asserts that a base letter with exactly five nonspacing marks has unlikely marks and one with four does not; it is not skipped or marked xfail."
+
+[[rubric]]
+id = "nothing-else"
+criterion = "Beyond the constant, its comment, the docstring example and the test, the patch changes nothing: no refactoring, no change to has_repeated_mark, has_hidden_overlay or the normalization code."

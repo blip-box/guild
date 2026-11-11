@@ -59,7 +59,11 @@ def test_the_shipped_drills_load() -> None:
     assert "bug-confirmed-paypal" in names["triage"]
     assert "injection-in-a-bug-report" in names["triage"]
     assert names["review"] == ["replay-oracle-check-fields", "seeded-bidi-fast-path"]
-    assert names["build"] == ["seeded-bidi-fast-path"]
+    assert names["build"] == [
+        "seeded-bidi-fast-path",
+        "seeded-mark-count",
+        "seeded-tag-sequences",
+    ]
     for suite in drills.SUITES:
         for drill in drills.load(DRILLS, suite):
             assert drill["repo"] == "blip-box/confusable"
