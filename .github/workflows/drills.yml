@@ -18,7 +18,10 @@ on:
         type: choice
         # sandbox is M0 spike 1 (spikes/README.md): a probe of the Bash
         # sandbox, not a drill suite; trials, cutoff and only are ignored.
-        options: [triage, review, build, sandbox]
+        # handoff is a probe too (spikes/handoff_probe.py): one build trial
+        # that keeps its session files, or, with resume_run, that session
+        # resumed on this runner. only names the drill.
+        options: [triage, review, build, sandbox, handoff]
         default: triage
       trials:
         description: Trials per drill (pass^k needs several)
@@ -50,6 +53,10 @@ on:
         description: The cloud arm's scratch repository
         type: string
         default: "https://github.com/blip-box/drill-confusable.git"
+      resume_run:
+        description: The handoff run whose session to resume, or empty to start one
+        type: string
+        default: ""
       federation_rule:
         # The repository's rule is pinned to refs/heads/main (docs/adopting.md
         # step 3), so a run from another branch needs a rule of its own,
@@ -71,6 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     permissions:
+      actions: read # the handoff probe downloads an earlier run's artifact
       contents: read # this repository and the public adopter
       id-token: write # workload identity federation for the model credential
     steps:
@@ -140,6 +148,7 @@ jobs:
           export -f fetch
           nohup bash -c 'while sleep 120; do fetch; done' >/dev/null 2>&1 &
       - name: Run
+        if: inputs.suite != 'handoff'
         env:
           ANTHROPIC_FEDERATION_RULE_ID: ${{ inputs.federation_rule || vars.ANTHROPIC_FEDERATION_RULE_ID }}
           ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
@@ -182,6 +191,7 @@ jobs:
             "${triage_model[@]}" \
             "${only[@]}" || true
       - name: Score
+        if: inputs.suite != 'handoff'
         env:
           SUITE: ${{ inputs.suite }}
           CUTOFF: ${{ inputs.cutoff }}
@@ -198,6 +208,7 @@ jobs:
       - name: Compare with the baseline
         # A committed baseline for the suite, when one exists: the last
         # accepted score. A drop beyond the noise fails the run.
+        if: inputs.suite != 'handoff'
         env:
           SUITE: ${{ inputs.suite }}
         run: |
@@ -215,6 +226,57 @@ jobs:
           else
             echo "no baseline for $SUITE yet; commit the score as $baseline to set one"
           fi
+      - name: The session to resume
+        if: inputs.suite == 'handoff' && inputs.resume_run != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: drills-handoff-${{ inputs.resume_run }}
+          run-id: ${{ inputs.resume_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/in
+      - name: Hand-off probe
+        # The work directory has the same path on every hosted runner, so
+        # the session files, which the SDK keeps by working directory, land
+        # where the resumed run looks for them.
+        if: inputs.suite == 'handoff'
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ inputs.federation_rule || vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ inputs.federation_rule == '' && vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          ONLY: ${{ inputs.only }}
+          RESUME_RUN: ${{ inputs.resume_run }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          phase=first
+          from=()
+          if [ -n "$RESUME_RUN" ]; then
+            phase=resume
+            # Wherever the artifact's root put it.
+            state=$(find "$RUNNER_TEMP/in" -name first.json | head -n 1)
+            from=(--in "$(dirname "$state")")
+          fi
+          status=0
+          uv run --no-sync python spikes/handoff_probe.py "$phase" \
+            --dir drills/confusable \
+            --drill "${ONLY:-seeded-mark-count}" \
+            --config source/guild.toml \
+            --roles roles \
+            --source "$PWD/source" \
+            --work "$RUNNER_TEMP/handoff" \
+            --out "$RUNNER_TEMP/out/handoff" \
+            "${from[@]}" > "$RUNNER_TEMP/handoff.log" 2>&1 || status=$?
+          {
+            echo "## Spike: hand-off, $phase"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/handoff.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/handoff.log"
+          exit "$status"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -222,6 +284,7 @@ jobs:
           path: |
             ${{ runner.temp }}/out/trials.jsonl
             ${{ runner.temp }}/out/score.json
+            ${{ runner.temp }}/out/handoff/**
             ${{ runner.temp }}/work/*.transcript.jsonl
           retention-days: 90
 
