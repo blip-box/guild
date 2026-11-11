@@ -146,7 +146,8 @@ def apply_policy(output: ModelOutput, oracle: Oracle) -> Record:
     citation; when the oracle could not run, a steward looks rather than the
     reporter being asked again. A feature is actionable only with the charter
     clause it serves. Security reports, questions, spam and the rest are never
-    actionable here: a steward or a template answers them.
+    actionable here: a steward or a template answers them. The clause the
+    model names is the citation, so naming one settles whether it is missing.
 
     The oracle's verdict outranks the model's reading of the reproducer: when
     the check ran, the fields it needed are in the text, so the model's doubt
@@ -159,6 +160,12 @@ def apply_policy(output: ModelOutput, oracle: Oracle) -> Record:
     missing = set(output["missing"])
     if oracle in ("confirms", "disagrees"):
         missing -= ORACLE_FIELDS
+    # A named clause is the citation (a bug) or the clause (a feature): a
+    # model that names one and reports it missing contradicts itself. The
+    # drills saw this on a report that mentioned an earlier issue without
+    # its number, which the model read as the missing citation.
+    if clause is not None:
+        missing -= {"citation", "clause"}
     severity = output["severity"] if kind == "bug" else "none"
     actionable = False
     template: str

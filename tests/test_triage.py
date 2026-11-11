@@ -94,6 +94,10 @@ def test_bug_policy() -> None:
     uncited = triage.apply_policy(output(clause=None), "confirms")
     assert uncited["actionable"] is False
     assert uncited["missing"] == ["citation"]
+    # A named clause is the citation: naming one and missing it is no reading.
+    cited = triage.apply_policy(output(missing=["citation"]), "confirms")
+    assert cited["actionable"] is True
+    assert cited["missing"] == []
 
     # The oracle ran, so the fields it needed are there whatever the model
     # thought; a field it did not need is still missing.
@@ -139,6 +143,12 @@ def test_feature_policy() -> None:
         output(kind="feature", clause="UTS #39 section 4"), "not_applicable"
     )
     assert spec_clause["missing"] == ["clause"]
+    contradiction = triage.apply_policy(
+        output(kind="feature", clause="C-SCOPE-5", missing=["clause"]),
+        "not_applicable",
+    )
+    assert contradiction["actionable"] is True
+    assert contradiction["missing"] == []
 
     incomplete = triage.apply_policy(
         output(kind="feature", clause="C-SCOPE-5", missing=["summary"]), "not_run"

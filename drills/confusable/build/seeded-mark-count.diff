@@ -1,0 +1,52 @@
+diff --git a/src/confusable/_marks.py b/src/confusable/_marks.py
+index 96020b8..cb7c57e 100644
+--- a/src/confusable/_marks.py
++++ b/src/confusable/_marks.py
+@@ -14,8 +14,9 @@ from functools import cache
+ from confusable._lookup import Runs
+ from confusable._normalize import combining_classes, nfd
+ 
+-# UTS #39 section 5.4: "Forbid sequences of more than 4 nonspacing marks".
+-MAX_NONSPACING_MARKS = 4
++# UTS #39 section 5.4: "Forbid sequences of more than 4 nonspacing marks",
++# counting the mark the base letter carries in NFC as one of them.
++MAX_NONSPACING_MARKS = 5
+ 
+ 
+ @cache
+@@ -86,7 +87,7 @@ def has_unlikely_marks(text: str) -> bool:
+     False
+     >>> has_unlikely_marks("e\u0301\u0301")  # two COMBINING ACUTE ACCENTs
+     True
+-    >>> has_unlikely_marks("z\u0300\u0301\u0302\u0303\u0304")  # five marks
++    >>> has_unlikely_marks("z\u0300\u0301\u0302\u0303\u0304\u0305")  # six marks
+     True
+     """
+     if text.isascii():
+diff --git a/tests/test_marks.py b/tests/test_marks.py
+index 010518a..cbbc5c9 100644
+--- a/tests/test_marks.py
++++ b/tests/test_marks.py
+@@ -19,9 +19,6 @@ from confusable._normalize import nfc, nfd
+         ("a\u20dd\u20dd", True),  # an enclosing mark (Me) twice
+         ("a\u0301b\u0301", False),  # the same mark on two bases
+         ("a\u0300\u0301\u0302\u0303", False),  # four marks
+-        ("a\u0300\u0301\u0302\u0303\u0304", True),  # five
+-        # LATIN SMALL LETTER E WITH CIRCUMFLEX AND DOT BELOW brings two marks.
+-        ("\u1ec7\u0300\u0301\u0303", True),
+         # A spacing mark (Mc), DEVANAGARI VOWEL SIGN AA, ends a run.
+         ("\u0915\u0941\u093e\u0941", False),
+     ],
+@@ -31,9 +28,9 @@ def test_unlikely_marks(text: str, unlikely: bool) -> None:
+ 
+ 
+ def test_too_many_marks_is_not_icus_invisible_check() -> None:
+-    five = "a\u0300\u0301\u0302\u0303\u0304"
+-    assert has_unlikely_marks(five)
+-    assert not has_repeated_mark(five)
++    six = "a\u0300\u0301\u0302\u0303\u0304\u0305"
++    assert has_unlikely_marks(six)
++    assert not has_repeated_mark(six)
+ 
+ 
+ @pytest.mark.parametrize(

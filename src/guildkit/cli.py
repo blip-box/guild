@@ -32,6 +32,7 @@ from guildkit import (
     releaser,
     reviewer,
     snapshot,
+    systemone,
     tiers,
     triage,
 )
@@ -48,6 +49,13 @@ CREDENTIALS = (
     "ANTHROPIC_IDENTITY_TOKEN_FILE",
     "ANTHROPIC_IDENTITY_TOKEN",
 )
+# The triage callers a drill run may use, with the variables each needs.
+CALLERS = ("anthropic", "typesafe", "openai")
+CALLER_CREDENTIALS: dict[str, tuple[str, ...]] = {
+    "anthropic": CREDENTIALS,
+    "typesafe": ("TYPESAFE_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+}
 
 
 def _read_json(path: Path) -> Any:
@@ -868,15 +876,32 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
     if args.only:
         found = [d for d in found if d["name"] in args.only]
     if args.suite == "triage":
+        model = args.triage_model or cfg["triage"]["model"]
+        prices = cfg["prices"].get(model)
+        if prices is None and args.models is not None:
+            prices = config.load_models(args.models).get(model)
+        if prices is None:
+            print(f"drill-run: no prices for {model}; pass --models", file=sys.stderr)
+            return 2
         if args.reply is not None:
             call = _canned_caller(args.reply)
         else:
-            if not any(name in os.environ for name in CREDENTIALS):
-                print(f"drill-run: none of {CREDENTIALS} is set", file=sys.stderr)
+            needed = CALLER_CREDENTIALS[args.caller]
+            if not any(name in os.environ for name in needed):
+                print(f"drill-run: none of {needed} is set", file=sys.stderr)
                 return 2
-            import anthropic
+            if args.caller == "typesafe":
+                call = systemone.typesafe_caller(
+                    systemone.urllib_transport(), os.environ["TYPESAFE_API_KEY"]
+                )
+            elif args.caller == "openai":
+                call = systemone.openai_caller(
+                    systemone.urllib_transport(), os.environ["OPENAI_API_KEY"]
+                )
+            else:
+                import anthropic
 
-            call = triage.anthropic_caller(anthropic.Anthropic(max_retries=1))
+                call = triage.anthropic_caller(anthropic.Anthropic(max_retries=1))
         role = (args.roles / "triage.md").read_text(encoding="ascii")
     else:
         if args.source is None or args.work is None:
@@ -893,7 +918,13 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
             try:
                 if args.suite == "triage":
                     result = drills.run_triage(
-                        drill, trial, call=call, cfg=cfg, role=role
+                        drill,
+                        trial,
+                        call=call,
+                        cfg=cfg,
+                        role=role,
+                        model=model,
+                        prices=prices,
                     )
                 elif args.suite == "review":
                     work = args.work / f"{drill['name']}-{trial}"
@@ -924,7 +955,9 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
                         grader_transcript=args.work
                         / f"{drill['name']}-{trial}.grader.transcript.jsonl",
                     )
-            except drills.DrillError as error:
+            except (drills.DrillError, systemone.SystemOneError) as error:
+                if isinstance(error, systemone.SystemOneError) and error.detail:
+                    print(f"drill-run: {error}: {error.detail}", file=sys.stderr)
                 result = {
                     "suite": args.suite,
                     "drill": drill["name"],
@@ -1224,6 +1257,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source", type=Path, help="a clone of the adopting repository")
     p.add_argument("--work", type=Path, help="where the checkouts are made")
     p.add_argument("--reply", type=Path, help="a canned triage reply, for tests")
+    p.add_argument(
+        "--caller", choices=CALLERS, default="anthropic", help="the triage caller"
+    )
+    p.add_argument("--triage-model", help="the triage model, instead of the config's")
+    p.add_argument(
+        "--models", type=Path, help="a price table for models the config lacks"
+    )
     p.add_argument("--out", type=Path, required=True, help="trials, JSON lines")
     p.set_defaults(func=_cmd_drill_run)
 

@@ -22,5 +22,10 @@ they bind you. In particular:
   network. A plain job turns your working tree into a patch.
 - Run the test command the brief names before you finish. You cannot finish
   while it fails.
+- You may hand a search to the explorer subagent and a test run to the
+  runner subagent; both work under the same rules as you, and only what
+  they report comes back. The guild:escape-check skill says how to write a
+  non-ASCII character in source and check the file; use it when you need
+  one.
 - Finish with a short note of what you changed and why, in plain words. It
   is read by stewards, not posted anywhere.

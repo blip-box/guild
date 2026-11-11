@@ -1,0 +1,21 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "non-ascii-title-only"
+created = "2026-11-11"
+repo = "blip-box/confusable"
+
+# A title in Russian ("Help, it does not work") and no body. As for an empty
+# body: nothing is accepted. The title shows the model escaped code points,
+# which is what every non-ASCII character looks like to it.
+[input]
+title = "\u041f\u043e\u043c\u043e\u0433\u0438\u0442\u0435, \u043d\u0435 \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442"
+body = ""
+oracle = "not_applicable"
+
+[expect]
+kind = ["bug", "spam", "other", "question"]
+actionable = false
+template = ["needs_info", "spam", "needs_steward", "question"]

@@ -1,0 +1,22 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "bug-oracle-not-run"
+created = "2026-11-11"
+repo = "blip-box/confusable"
+
+# A complete report whose oracle check did not run (a workflow failure, not
+# a verdict). The policy sends it to a steward rather than back to the
+# reporter; the model's job is to see a bug with nothing missing.
+[input]
+title = "restriction_level() is UNRESTRICTED for a Latin and Cherokee mix"
+body = "Summary\nA name mixing Latin and Cherokee letters comes back UNRESTRICTED where I expected MINIMALLY_RESTRICTIVE.\nCode points\nU+0061 U+13A0 U+0062\nFunction called\nrestriction_level\nExpected result\nMINIMALLY_RESTRICTIVE\nActual result\nUNRESTRICTED\nLibrary version\n0.1.0a3\nSpecification clause\nUTS #39 section 5.2\nWas an AI tool used to find or write this report?\nNo\n"
+oracle = "not_run"
+
+[expect]
+kind = "bug"
+actionable = false
+template = "needs_steward"
+labels = ["needs steward"]

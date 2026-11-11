@@ -373,9 +373,23 @@ def _trial(
 
 
 def run_triage(
-    drill: Drill, trial: int, *, call: triage.Caller, cfg: Config, role: str
+    drill: Drill,
+    trial: int,
+    *,
+    call: triage.Caller,
+    cfg: Config,
+    role: str,
+    model: str | None = None,
+    prices: triage.Prices | None = None,
 ) -> Trial:
-    """Run the triage call on the drill's issue and grade the record."""
+    """Run the triage call on the drill's issue and grade the record.
+
+    `model` and `prices` override the config's triage model and its price
+    table, for a candidate model the adopter has not pinned. A caller that
+    keeps `probabilities` (the System One callers) has them added to the
+    trial's `actual`, as numbers, so a failed trial's record says how sure
+    the model was; `describe` leaves them out of the runner's line.
+    """
     inp = drill["input"]
     issue = {
         "number": int(inp.get("number", 0)),
@@ -390,7 +404,7 @@ def run_triage(
     }
     snap = snapshot.snapshot(drill["repo"], issue)
     user = snapshot.render(snap) + f"\nOracle check: {inp['oracle']}\n"
-    model = cfg["triage"]["model"]
+    model = model or cfg["triage"]["model"]
     record, usage, parsed = triage.triage(
         call,
         system=role,
@@ -402,11 +416,14 @@ def run_triage(
     reasons = grade_triage(record, drill["expect"])
     if not parsed:
         reasons.append("the reply did not parse")
-    cost = cost_usd(usage, cfg["prices"][model])
-    actual = {
+    cost = cost_usd(usage, prices or cfg["prices"][model])
+    actual: dict[str, Any] = {
         key: record[key]
         for key in ("kind", "severity", "clause", "missing", "template")
     }
+    probabilities = getattr(call, "probabilities", None)
+    if isinstance(probabilities, dict) and probabilities:
+        actual["probabilities"] = probabilities
     return _trial(
         drill,
         trial,
@@ -426,7 +443,7 @@ def describe(trial: Trial) -> str:
     template and the missing fields the model chose, never its words.
     """
     actual = trial["actual"]
-    if trial["passed"] or not actual:
+    if trial["passed"] or "kind" not in actual:
         return ""
     parts = [f"kind {actual['kind']}", f"template {actual['template']}"]
     if actual["missing"]:
@@ -558,55 +575,31 @@ def run_review(
     )
 
 
-def run_build(
+def _judge_build(
     drill: Drill,
     trial: int,
     *,
     cfg: Config,
     source: Path,
     work: Path,
-    role: str,
-    transcript: Path | None = None,
-    runner: Any = None,
-    grader_role: str | None = None,
-    grader_transcript: Path | None = None,
+    run_ok: bool,
+    model: str,
+    cost: float,
+    turns: int,
+    duration_ms: int,
+    handbook: str,
+    charter: str,
+    grader_role: str | None,
+    grader_transcript: Path | None,
+    runner: Any,
+    actual: dict[str, Any] | None = None,
 ) -> Trial:
-    """Prepare the checkout, seed it, run the Builder, check and grade its diff.
+    """Check and grade the working tree's diff, whoever made it.
 
-    When the drill has a rubric and the tests passed, the grader runs in
-    the same checkout as the second judge; its cost is added to the trial's.
+    The plain check, the grading tests from the source clone and, when the
+    drill has a rubric and nothing failed, the grader as the second judge.
     """
-    from guildkit import agents
-
-    inp = drill["input"]
     grade = drill["grade"]
-    directory = Path(drill["directory"])
-    seed = directory / inp["seed"] if "seed" in inp else None
-    prepare_checkout(source, inp["base"], work, seed=seed)
-    if "setup" in inp and _command(inp["setup"], work, 900) != 0:
-        raise DrillError(f"{drill['name']}: the setup command failed")
-    handbook = (work / "AGENTS.md").read_text(encoding="utf-8")
-    charter = (work / cfg["charter"]).read_text(encoding="utf-8")
-    system, user = builder.prompt(
-        role=role,
-        handbook=handbook,
-        charter=charter,
-        brief=brief.render(_drill_brief(drill)),
-    )
-    tests = agents.TestGate(
-        work, cfg["build"]["test_command"], rounds=cfg["build"]["max_test_rounds"]
-    )
-    record = _agent(
-        cfg=cfg,
-        role_name="builder",
-        root=work,
-        system=system,
-        user=user,
-        output_format=None,
-        tests=tests,
-        transcript=transcript,
-        runner=runner,
-    )
     diff = working_diff(work)
     check = builder.check_patch(
         diff,
@@ -625,8 +618,7 @@ def run_build(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
     grade_exit = _command(grade["command"], work, int(grade.get("timeout", 900)))
-    reasons = grade_build(check, _run_ok(record), grade_exit, drill["expect"])
-    cost = record["cost_usd"]
+    reasons = grade_build(check, run_ok, grade_exit, drill["expect"])
     unknown: list[str] = []
     if drill["rubric"] and not reasons:
         if grader_role is None:
@@ -668,11 +660,79 @@ def run_build(
         drill,
         trial,
         reasons,
-        model=record["model"],
+        model=model,
         cost=round(cost, 6),
+        turns=turns,
+        duration_ms=duration_ms,
+        unknown=unknown,
+        actual=actual,
+    )
+
+
+def run_build(
+    drill: Drill,
+    trial: int,
+    *,
+    cfg: Config,
+    source: Path,
+    work: Path,
+    role: str,
+    transcript: Path | None = None,
+    runner: Any = None,
+    grader_role: str | None = None,
+    grader_transcript: Path | None = None,
+) -> Trial:
+    """Prepare the checkout, seed it, run the Builder, check and grade its diff.
+
+    When the drill has a rubric and the tests passed, the grader runs in
+    the same checkout as the second judge; its cost is added to the trial's.
+    """
+    from guildkit import agents
+
+    inp = drill["input"]
+    directory = Path(drill["directory"])
+    seed = directory / inp["seed"] if "seed" in inp else None
+    prepare_checkout(source, inp["base"], work, seed=seed)
+    if "setup" in inp and _command(inp["setup"], work, 900) != 0:
+        raise DrillError(f"{drill['name']}: the setup command failed")
+    handbook = (work / "AGENTS.md").read_text(encoding="utf-8")
+    charter = (work / cfg["charter"]).read_text(encoding="utf-8")
+    system, user = builder.prompt(
+        role=role,
+        handbook=handbook,
+        charter=charter,
+        brief=brief.render(_drill_brief(drill)),
+    )
+    tests = agents.TestGate(
+        work, cfg["build"]["test_command"], rounds=cfg["build"]["max_test_rounds"]
+    )
+    record = _agent(
+        cfg=cfg,
+        role_name="builder",
+        root=work,
+        system=system,
+        user=user,
+        output_format=None,
+        tests=tests,
+        transcript=transcript,
+        runner=runner,
+    )
+    return _judge_build(
+        drill,
+        trial,
+        cfg=cfg,
+        source=source,
+        work=work,
+        run_ok=_run_ok(record),
+        model=record["model"],
+        cost=record["cost_usd"],
         turns=record["num_turns"],
         duration_ms=record["duration_ms"],
-        unknown=unknown,
+        handbook=handbook,
+        charter=charter,
+        grader_role=grader_role,
+        grader_transcript=grader_transcript,
+        runner=runner,
     )
 
 

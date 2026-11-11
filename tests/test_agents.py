@@ -14,6 +14,7 @@ from claude_agent_sdk import (
 )
 
 from guildkit import agents
+from guildkit.roles import Role
 
 REJECT = [".github/**", "AGENTS.md", "guild.toml", "conftest.py"]
 PRICES = {
@@ -71,7 +72,19 @@ def decision(output: dict[str, Any]) -> str:
         ("Bash", {"command": "python -c 'import socket'"}, "command refused"),
         ("Bash", {}, "no command"),
         ("WebFetch", {"url": "https://x"}, "tool not allowed for this role"),
-        ("Agent", {"prompt": "x"}, "tool not allowed for this role"),
+        ("Agent", {"prompt": "x"}, "unknown subagent"),
+        (
+            "Agent",
+            {"prompt": "x", "subagent_type": "general-purpose"},
+            "unknown subagent",
+        ),
+        ("Agent", {"prompt": "x", "subagent_type": "fork"}, "unknown subagent"),
+        ("Agent", {"prompt": "x", "subagent_type": "explorer"}, None),
+        ("Task", {"prompt": "x", "subagent_type": "runner"}, None),
+        ("Skill", {"skill": "guild:escape-check"}, None),
+        ("Skill", {"skill": "escape-check"}, "unknown skill"),
+        ("Skill", {"skill": "code-review"}, "unknown skill"),
+        ("TodoWrite", {"todos": []}, "tool not allowed for this role"),
     ],
 )
 def test_builder_gate_reasons(
@@ -93,6 +106,20 @@ def test_read_only_roles_cannot_write(checkout: Path) -> None:
         )
         == "tool not allowed for this role"
     )
+    # Delegation and skills are the Builder's alone.
+    readers: tuple[Role, ...] = ("planner", "reviewer", "grader")
+    for role in readers:
+        gate = agents.Gate(checkout, role=role, reject=REJECT)
+        assert (
+            gate.reason("Agent", {"prompt": "x", "subagent_type": "explorer"})
+            == "tool not allowed for this role"
+        )
+        assert (
+            gate.reason("Skill", {"skill": "guild:escape-check"})
+            == "tool not allowed for this role"
+        )
+        assert "Agent" in agents.never(role)
+        assert "Skill" in agents.never(role)
     assert (
         agents.Gate(checkout, role="grader", reject=REJECT).reason(
             "Bash", {"command": "uv run --no-sync pytest"}
@@ -214,12 +241,38 @@ def test_options_give_the_sdk_nothing_from_disk(checkout: Path, tmp_path: Path) 
         tests=tests,
     )
     assert opts.setting_sources == []
-    assert opts.skills == []
+    assert opts.skills == ["guild:escape-check"]
     assert opts.strict_mcp_config is True
     assert opts.mcp_servers == {}
-    assert opts.tools == ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+    assert opts.tools == [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash",
+        "Agent",
+        "Skill",
+    ]
     assert "WebFetch" in opts.disallowed_tools
     assert opts.allowed_tools == []
+    # The Builder's delegation: its own subagents, one level deep, no fork,
+    # no built-in agents; its skills from the package's own plugin.
+    assert opts.disallowed_tools == agents.never("builder")
+    assert "Agent(fork)" in opts.disallowed_tools
+    assert not {"Agent", "Task", "Skill"} & set(opts.disallowed_tools)
+    assert opts.agents is not None
+    assert set(opts.agents) == {"explorer", "runner"}
+    assert opts.agents["explorer"].tools == ["Read", "Glob", "Grep"]
+    assert opts.agents["runner"].tools == ["Bash", "Read", "Glob", "Grep"]
+    for definition in opts.agents.values():
+        assert set(definition.tools or []) <= set(agents.TOOLS["builder"])
+        assert definition.model == "inherit"
+    assert opts.plugins == [{"type": "local", "path": str(agents.PLUGIN_DIR)}]
+    assert (agents.PLUGIN_DIR / "skills" / "escape-check" / "SKILL.md").is_file()
+    assert opts.skills == ["guild:escape-check"]
+    assert opts.env["CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS"] == "1"
+    assert opts.env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "1"
     assert opts.permission_mode == "default"
     assert opts.can_use_tool == gate.can_use_tool
     assert opts.verbatim_prompts is True
@@ -234,6 +287,25 @@ def test_options_give_the_sdk_nothing_from_disk(checkout: Path, tmp_path: Path) 
     assert set(opts.hooks) == {"PreToolUse", "Stop"}
     assert opts.hooks["Stop"][0].timeout == tests.timeout + 60
     assert opts.output_format is None
+    assert opts.sandbox is not None
+    sandbox = dict(opts.sandbox)
+    # The run's own uv cache and temp directory are the only writes allowed
+    # outside the checkout, and the commands are pointed at them.
+    assert sandbox.pop("filesystem") == {
+        "allowWrite": [
+            str(tmp_path / "cfg" / "uv-cache"),
+            str(tmp_path / "cfg" / "tmp"),
+        ]
+    }
+    assert sandbox == agents.SANDBOX
+    assert opts.env["UV_CACHE_DIR"] == str(tmp_path / "cfg" / "uv-cache")
+    assert opts.env["TMPDIR"] == str(tmp_path / "cfg" / "tmp")
+    assert opts.env["VIRTUAL_ENV"] == str(checkout / ".venv")
+    assert (tmp_path / "cfg" / "uv-cache").is_dir()
+    assert agents.SANDBOX["enabled"] is True
+    assert agents.SANDBOX["allowUnsandboxedCommands"] is False
+    assert agents.SANDBOX["failIfUnavailable"] is True
+    assert agents.SANDBOX["network"] == {"allowedDomains": [], "deniedDomains": []}
     with pytest.raises(ValueError, match="effort"):
         agents.options(
             root=checkout,
@@ -438,3 +510,109 @@ def test_succeeded_needs_a_clean_end_and_green_tests(
     assert not agents.succeeded(record)
     gate.repeated = True
     assert not agents.succeeded(run_with(result()))
+
+
+def test_reader_roles_get_no_delegation_or_skills(
+    checkout: Path, tmp_path: Path
+) -> None:
+    readers: tuple[Role, ...] = ("planner", "reviewer", "grader")
+    for role in readers:
+        gate = agents.Gate(checkout, role=role, reject=REJECT)
+        opts = agents.options(
+            root=checkout,
+            config_dir=tmp_path / "cfg",
+            system_prompt="read",
+            role=role,
+            model="claude-opus-5-5",
+            max_turns=5,
+            cap_usd=1.0,
+            effort="low",
+            gate=gate,
+        )
+        assert opts.agents is None
+        assert opts.plugins == []
+        assert opts.skills == []
+        assert "Agent" in opts.disallowed_tools
+        assert "Skill" in opts.disallowed_tools
+        assert isinstance(opts.tools, list)
+        assert "Agent" not in opts.tools
+
+
+def test_the_plugin_skill_is_named_as_the_builder_may_invoke_it() -> None:
+    text = (agents.PLUGIN_DIR / "skills" / "escape-check" / "SKILL.md").read_text(
+        encoding="ascii"
+    )
+    assert text.startswith("---\nname: escape-check\n")
+    assert agents.SKILLS == ("guild:escape-check",)
+    assert agents.PLUGIN_DIR.name == "guild"
+
+
+class _Reply:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+def test_refresh_identity_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import urllib.error
+    import urllib.request
+
+    token = tmp_path / "identity-token"
+    token.write_text("old", encoding="ascii")
+    # Outside Actions nothing happens.
+    for name in (
+        "ACTIONS_ID_TOKEN_REQUEST_URL",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+        "ANTHROPIC_IDENTITY_TOKEN_FILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert agents.refresh_identity_token() is False
+    assert token.read_text(encoding="ascii") == "old"
+    monkeypatch.setenv(
+        "ACTIONS_ID_TOKEN_REQUEST_URL", "https://actions/x?api-version=2"
+    )
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-bearer")
+    monkeypatch.setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", str(token))
+    seen: list[tuple[str, str | None]] = []
+    replies: list[Any] = [_Reply(b'{"value": "fresh-jwt"}')]
+
+    def urlopen(request: Any, timeout: float) -> Any:
+        seen.append((request.full_url, request.get_header("Authorization")))
+        outcome = replies.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert agents.refresh_identity_token() is True
+    assert token.read_text(encoding="ascii") == "fresh-jwt"
+    assert seen == [
+        (
+            "https://actions/x?api-version=2&audience=https://api.anthropic.com",
+            "Bearer request-bearer",
+        )
+    ]
+    # A failed fetch leaves the file as it is.
+    import email.message
+    import io
+
+    replies[:] = [
+        urllib.error.HTTPError(
+            "https://actions/x", 500, "err", email.message.Message(), io.BytesIO(b"x")
+        )
+    ]
+    assert agents.refresh_identity_token() is False
+    assert token.read_text(encoding="ascii") == "fresh-jwt"
+    replies[:] = [_Reply(b'{"value": ""}')]
+    assert agents.refresh_identity_token() is False
+    assert token.read_text(encoding="ascii") == "fresh-jwt"

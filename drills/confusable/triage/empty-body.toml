@@ -1,0 +1,20 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "empty-body"
+created = "2026-11-11"
+repo = "blip-box/confusable"
+
+# A title and nothing else. Whether the model reads it as an empty report,
+# spam or something for a steward, nothing is accepted.
+[input]
+title = "bug"
+body = ""
+oracle = "not_applicable"
+
+[expect]
+kind = ["bug", "spam", "other", "question"]
+actionable = false
+template = ["needs_info", "spam", "needs_steward", "question"]
