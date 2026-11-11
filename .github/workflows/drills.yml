@@ -69,13 +69,36 @@ jobs:
       - run: uv sync --locked --no-default-groups --extra agents
       - name: Sandbox dependencies
         # The Bash sandbox (agents.SANDBOX) is bubblewrap on Linux and needs
-        # socat for its proxy; Ubuntu's AppArmor may refuse the unprivileged
-        # user namespace it creates, so that restriction is lifted. Without
-        # them the run ends instead of running commands unsandboxed.
+        # socat for its proxy. Ubuntu 24.04 and later restrict unprivileged
+        # user namespaces twice: a sysctl strips the capabilities of a
+        # namespace an unconfined program creates, and the AppArmor profile
+        # bwrap-userns-restrict confines bubblewrap's children the same way,
+        # whatever the sysctl says. The sandbox's seccomp helper needs a
+        # namespace of its own inside bubblewrap's, so both are lifted: the
+        # sysctl, and the profile Claude Code's sandboxing page documents in
+        # place of the stock one. The last line fails the job if a nested
+        # namespace still does not work; without it the run would end
+        # instead of running commands unsandboxed.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq bubblewrap socat
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+            sudo mkdir -p /etc/apparmor.d/disable
+            sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
+          fi
+          sudo tee /etc/apparmor.d/bwrap > /dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          bwrap --unshare-all --dev-bind / / -- unshare -Ur true
       - name: Identity token
         if: inputs.federation_rule != '' || vars.ANTHROPIC_FEDERATION_RULE_ID != ''
         run: |
@@ -173,27 +196,47 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked --no-default-groups --extra agents
       - name: Sandbox dependencies
+        # The Bash sandbox (agents.SANDBOX) is bubblewrap on Linux and needs
+        # socat for its proxy. Ubuntu 24.04 and later restrict unprivileged
+        # user namespaces twice: a sysctl strips the capabilities of a
+        # namespace an unconfined program creates, and the AppArmor profile
+        # bwrap-userns-restrict confines bubblewrap's children the same way,
+        # whatever the sysctl says. The sandbox's seccomp helper needs a
+        # namespace of its own inside bubblewrap's, so both are lifted: the
+        # sysctl, and the profile Claude Code's sandboxing page documents in
+        # place of the stock one. The last line fails the job if a nested
+        # namespace still does not work; without it the run would end
+        # instead of running commands unsandboxed.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq bubblewrap socat
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+            sudo mkdir -p /etc/apparmor.d/disable
+            sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
+          fi
+          sudo tee /etc/apparmor.d/bwrap > /dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          bwrap --unshare-all --dev-bind / / -- unshare -Ur true
       - name: Diagnose nested user namespaces
-        # The first probe (run 42991205128's successor) found the sandbox's
-        # seccomp helper unable to set up a user namespace inside bubblewrap:
-        # "nested userns is capability-restricted". Ubuntu 24.04 and later
-        # ship an AppArmor profile, bwrap-userns-restrict, that confines
-        # bubblewrap's children whatever the sysctl says. This step records
-        # the facts, applies the profile Claude Code's sandboxing page
-        # documents when the nested test fails, and retests; the model turn
-        # runs only when a nested namespace works.
+        # A record for the spike (docs/ab-experiment-plan.md, M0 log): the
+        # first probe found the sandbox's seccomp helper unable to set up a
+        # user namespace inside bubblewrap ("nested userns is
+        # capability-restricted"), the stock AppArmor profile's doing. The
+        # shared step above lifts it; this step shows the runner's state and
+        # gates the model turn on a nested namespace working.
         id: diagnose
         run: |
           set +e
-          test_nested() {
-            bwrap --unshare-all --dev-bind / / -- unshare -Ur true 2>&1 \
-              && echo "nested userns inside bwrap: ok" \
-              || { echo "nested userns inside bwrap: FAIL"; return 1; }
-          }
           {
             echo "### Diagnosis"
             echo '```'
@@ -204,29 +247,12 @@ jobs:
             echo "apparmor.d:"; ls /etc/apparmor.d | grep -i -E 'bwrap|userns|unshare' | sed 's/^/  /'
             echo "loaded profiles:"; sudo aa-status 2>/dev/null | grep -i -E 'bwrap|userns' | sed 's/^/  /'
             unshare -Ur true 2>&1 && echo "plain userns: ok" || echo "plain userns: FAIL"
-            if ! test_nested; then
-              echo "applying the documented bwrap profile"
-              if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
-                sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict 2>&1
-                sudo mkdir -p /etc/apparmor.d/disable
-                sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
-              fi
-              sudo tee /etc/apparmor.d/bwrap > /dev/null <<'EOF'
-          abi <abi/4.0>,
-          include <tunables/global>
-
-          profile bwrap /usr/bin/bwrap flags=(unconfined) {
-            userns,
-            include if exists <local/bwrap>
-          }
-          EOF
-              sudo apparmor_parser -r /etc/apparmor.d/bwrap 2>&1
-              sudo aa-status 2>/dev/null | grep -i -E 'bwrap' | sed 's/^/  /'
-              test_nested && echo "after the profile: ok" || echo "after the profile: still FAIL"
-            fi
+            bwrap --unshare-all --dev-bind / / -- unshare -Ur true 2>&1 \
+              && echo "nested userns inside bwrap: ok" \
+              || echo "nested userns inside bwrap: FAIL"
             echo '```'
           } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          if test_nested >/dev/null 2>&1; then
+          if bwrap --unshare-all --dev-bind / / -- unshare -Ur true >/dev/null 2>&1; then
             echo "nested_ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "nested_ok=false" >> "$GITHUB_OUTPUT"
