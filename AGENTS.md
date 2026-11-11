@@ -126,7 +126,8 @@ CI runs exactly these, so a clean local run means a clean CI run.
   oracle check reads.
 - `docs/plan.md`: the design and its decision log. `docs/adopting.md`: what an
   adopter adds and what stewards set up. `docs/operations.md`: the kill switch
-  and its rehearsal, the brakes, the ledger. `docs/research/`: the research.
+  and its rehearsal, the brakes, the ledger. `docs/research/`: the research,
+  and the frozen records of the harness memo and the A/B experiment.
 - `.github/workflows/drills.yml`: runs a suite of drills against confusable by
   hand and scores it, with the model credential this repository holds.
   `.github/workflows/canary.yml`: the weekly canary, five drills at one trial,
