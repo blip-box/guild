@@ -263,7 +263,9 @@ def test_the_question_set_is_the_role_prompts_rubric() -> None:
     for kind in ("bug", "feature", "security", "spam"):
         assert systemone.KIND_CRITERIA[kind] in role
     assert "a missed look-alike is a security bug" in role
-    assert "a missed look-alike is a security bug" in systemone.SEVERITY_CRITERIA["high"]
+    assert (
+        "a missed look-alike is a security bug" in systemone.SEVERITY_CRITERIA["high"]
+    )
     # The two fields the policy derives from the clause are not asked.
     assert set(systemone.MISSING_TEXT) == set(triage.MISSING) - {"citation", "clause"}
 

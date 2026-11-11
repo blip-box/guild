@@ -98,6 +98,7 @@ class SystemOneError(ValueError):
     """
 
     def __init__(self, message: str, detail: str = "") -> None:
+        """Keep the vendor's words in `detail`, apart from the message."""
         super().__init__(message)
         self.detail = detail
 
@@ -152,7 +153,9 @@ def clause_candidates(text: str) -> list[str]:
 def _clause(choice: Any, candidates: list[str]) -> str | None:
     if choice == "none":
         return None
-    if choice in candidates and (CLAUSE.match(choice) or _SPEC_CLAUSE.fullmatch(choice)):
+    if choice in candidates and (
+        CLAUSE.match(choice) or _SPEC_CLAUSE.fullmatch(choice)
+    ):
         return str(choice)
     raise SystemOneError(f"clause choice {choice!r} is not a candidate")
 
@@ -315,8 +318,7 @@ class _OpenAICaller(_Caller):
                     f"{PREAMBLE} How severe is the bug the issue reports, if it is one?"
                 ),
                 "choices": [
-                    {"value": k, "description": v}
-                    for k, v in SEVERITY_CRITERIA.items()
+                    {"value": k, "description": v} for k, v in SEVERITY_CRITERIA.items()
                 ],
             },
             {
@@ -329,7 +331,12 @@ class _OpenAICaller(_Caller):
                     {"value": c, "description": f"the text supports {c}"}
                     for c in candidates
                 ]
-                + [{"value": "none", "description": "no clause is supported by the text"}],
+                + [
+                    {
+                        "value": "none",
+                        "description": "no clause is supported by the text",
+                    }
+                ],
             },
         ]
         for name, what in MISSING_TEXT.items():
