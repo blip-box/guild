@@ -177,13 +177,72 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq bubblewrap socat
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Diagnose nested user namespaces
+        # The first probe (run 42991205128's successor) found the sandbox's
+        # seccomp helper unable to set up a user namespace inside bubblewrap:
+        # "nested userns is capability-restricted". Ubuntu 24.04 and later
+        # ship an AppArmor profile, bwrap-userns-restrict, that confines
+        # bubblewrap's children whatever the sysctl says. This step records
+        # the facts, applies the profile Claude Code's sandboxing page
+        # documents when the nested test fails, and retests; the model turn
+        # runs only when a nested namespace works.
+        id: diagnose
+        run: |
+          set +e
+          test_nested() {
+            bwrap --unshare-all --dev-bind / / -- unshare -Ur true 2>&1 \
+              && echo "nested userns inside bwrap: ok" \
+              || { echo "nested userns inside bwrap: FAIL"; return 1; }
+          }
+          {
+            echo "### Diagnosis"
+            echo '```'
+            echo "image: $ImageOS $ImageVersion"
+            bwrap --version
+            sysctl kernel.apparmor_restrict_unprivileged_userns \
+              kernel.apparmor_restrict_unprivileged_unconfined 2>&1
+            echo "apparmor.d:"; ls /etc/apparmor.d | grep -i -E 'bwrap|userns|unshare' | sed 's/^/  /'
+            echo "loaded profiles:"; sudo aa-status 2>/dev/null | grep -i -E 'bwrap|userns' | sed 's/^/  /'
+            unshare -Ur true 2>&1 && echo "plain userns: ok" || echo "plain userns: FAIL"
+            if ! test_nested; then
+              echo "applying the documented bwrap profile"
+              if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+                sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict 2>&1
+                sudo mkdir -p /etc/apparmor.d/disable
+                sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
+              fi
+              sudo tee /etc/apparmor.d/bwrap > /dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          EOF
+              sudo apparmor_parser -r /etc/apparmor.d/bwrap 2>&1
+              sudo aa-status 2>/dev/null | grep -i -E 'bwrap' | sed 's/^/  /'
+              test_nested && echo "after the profile: ok" || echo "after the profile: still FAIL"
+            fi
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          if test_nested >/dev/null 2>&1; then
+            echo "nested_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "nested_ok=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Identity token
-        if: inputs.federation_rule != '' || vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        if: steps.diagnose.outputs.nested_ok == 'true' && (inputs.federation_rule != '' || vars.ANTHROPIC_FEDERATION_RULE_ID != '')
         run: |
           curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
             | jq -r .value > "$RUNNER_TEMP/identity-token"
           echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Nested user namespaces unavailable
+        if: steps.diagnose.outputs.nested_ok != 'true'
+        run: |
+          echo "the sandbox cannot run commands on this runner; see the diagnosis"
+          exit 1
       - name: Probe
         env:
           ANTHROPIC_FEDERATION_RULE_ID: ${{ inputs.federation_rule || vars.ANTHROPIC_FEDERATION_RULE_ID }}

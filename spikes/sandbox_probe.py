@@ -4,7 +4,8 @@ One short agent turn with the Builder's own options, except that the gate
 lets the command through: the model runs one command that tries curl and a
 plain socket, and the probe prints what came back. Costs a few cents on the
 triage model. Pass: `curl_exit` is not 0, `socket_ok` is absent, and the run
-ends with subtype `success`.
+ends with subtype `success`, and `probe_started` is present: without it the
+sandbox never ran the command, which proves nothing about egress.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from claude_agent_sdk import ResultMessage, ToolResultBlock, UserMessage, query
 from guildkit import agents
 
 COMMAND = (
-    "curl -sS -m 10 -o /dev/null -w '%{http_code}' https://example.com;"
+    "echo probe_started;"
+    " curl -sS -m 10 -o /dev/null -w '%{http_code}' https://example.com;"
     ' echo " curl_exit=$?";'
     " python3 -c \"import socket; socket.create_connection(('example.com', 443), 5);"
     " print('socket_ok')\" 2>&1 | tail -1"
@@ -71,9 +73,17 @@ async def main(model: str) -> int:
     print(f"subtype={subtype} denials={len(gate.denied)}")
     print("tool output:")
     print(text or "(none)")
-    blocked = "curl_exit=0" not in text and "socket_ok" not in text
-    print("verdict:", "blocked" if blocked and subtype == "success" else "NOT blocked")
-    return 0 if blocked and subtype == "success" else 1
+    started = "probe_started" in text
+    blocked = started and "curl_exit=0" not in text and "socket_ok" not in text
+    passed = blocked and subtype == "success"
+    if not started:
+        verdict = "command did not run (the sandbox failed before it)"
+    elif passed:
+        verdict = "blocked"
+    else:
+        verdict = "NOT blocked"
+    print("verdict:", verdict)
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
