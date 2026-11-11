@@ -41,6 +41,15 @@ on:
         description: The triage model, or empty for the adopter's (triage suite only)
         type: string
         default: ""
+      arm:
+        description: The build arm (build suite only; cloud grades branches a cloud session pushed)
+        type: choice
+        options: [sdk, cloud]
+        default: sdk
+      scratch:
+        description: The cloud arm's scratch repository
+        type: string
+        default: "https://github.com/blip-box/drill-confusable.git"
       federation_rule:
         # The repository's rule is pinned to refs/heads/main (docs/adopting.md
         # step 3), so a run from another branch needs a rule of its own,
@@ -136,6 +145,8 @@ jobs:
           ONLY: ${{ inputs.only }}
           CALLER: ${{ inputs.caller }}
           TRIAGE_MODEL: ${{ inputs.triage_model }}
+          ARM: ${{ inputs.arm }}
+          SCRATCH: ${{ inputs.scratch }}
           # Each System One key reaches the job only for its own caller.
           TYPESAFE_API_KEY: ${{ inputs.caller == 'typesafe' && secrets.TYPESAFE_API_KEY || '' }}
           OPENAI_API_KEY: ${{ inputs.caller == 'openai' && secrets.OPENAI_API_KEY || '' }}
@@ -160,6 +171,8 @@ jobs:
             --out "$RUNNER_TEMP/out/trials.jsonl" \
             --caller "$CALLER" \
             --models drills/models.toml \
+            --arm "$ARM" \
+            --scratch "$SCRATCH" \
             "${triage_model[@]}" \
             "${only[@]}" || true
       - name: Score

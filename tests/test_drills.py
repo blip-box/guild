@@ -1068,3 +1068,92 @@ def test_run_triage_takes_a_candidate_model_and_keeps_probabilities(
     )
     assert trial["passed"] is False
     assert drills.describe(trial) == " (kind question; template question)"
+
+
+def test_cloud_arm_grades_a_pushed_branch(
+    source: tuple[Path, str, str], tmp_path: Path, test_config: Path
+) -> None:
+    repo, base, fix = source
+    cfg = config.load(test_config)
+    seed = tmp_path / "seed.diff"
+    seed.write_text(
+        "diff --git a/src/x.py b/src/x.py\n--- a/src/x.py\n+++ b/src/x.py\n"
+        "@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 0\n",
+        encoding="ascii",
+    )
+    check_fix = (
+        "import sys; sys.exit(0 if open('src/x.py').read()"
+        ".endswith('return 2\\n') else 1)"
+    )
+    drill = drills.parse(
+        f"[drill]\nname='b'\ncreated='2026-11-11'\nrepo='o/r'\n[input]\nbase='{base}'\n"
+        "seed='seed.diff'\n[input.brief]\nkind='bug'\nclause='C-SCOPE-1'\nseverity='low'\n"
+        "[input.brief.fields]\n'Code points'='U+0041'\n"
+        f"[grade]\ncommand='''{sys.executable} -c \"{check_fix}\"'''\n"
+        "[expect]\nmust_change=['src/x.py']\n",
+        suite="build",
+        directory=tmp_path,
+    )
+    remote = tmp_path / "scratch.git"
+    git("init", "-q", "--bare", str(remote), cwd=tmp_path)
+    head = drills.push_scratch_base(
+        drill, source=repo, work=tmp_path / "base", remote=str(remote)
+    )
+    assert git("rev-parse", "refs/heads/base", cwd=remote).strip() == head
+    # Nothing after the drill's base is reachable from the scratch base.
+    assert fix not in git("rev-list", "base", cwd=remote).split()
+    assert drills.cloud_branches(drill, remote=str(remote), cwd=repo) == []
+
+    def session(name: str, path: str, content: str) -> None:
+        clone = tmp_path / f"session-{name}"
+        git("clone", "-q", "-b", "base", str(remote), str(clone), cwd=tmp_path)
+        (clone / path).write_text(content, encoding="ascii")
+        git("add", "-A", cwd=clone)
+        git(
+            "-c",
+            "user.name=Claude",
+            "-c",
+            "user.email=noreply@anthropic.com",
+            "commit",
+            "-q",
+            "-m",
+            "fix: a model wrote this\n\nClaude-Session: https://claude.ai/code/session_01abcDEF",
+            cwd=clone,
+        )
+        git("push", "-q", "origin", f"HEAD:refs/heads/claude/b-{name}", cwd=clone)
+
+    session("aaa111", "src/x.py", "def f():\n    return 2\n")
+    session("bbb222", "AGENTS.md", "changed\n")
+    branches = drills.cloud_branches(drill, remote=str(remote), cwd=repo)
+    assert branches == ["claude/b-aaa111", "claude/b-bbb222"]
+    good = drills.run_build_cloud(
+        drill,
+        1,
+        cfg=cfg,
+        source=repo,
+        work=tmp_path / "w1",
+        remote=str(remote),
+        branch=branches[0],
+    )
+    assert good["passed"] is True, good["reasons"]
+    assert good["model"] == "cloud-session"
+    assert good["cost_usd"] == 0.0
+    assert good["actual"] == {
+        "branch": "claude/b-aaa111",
+        "session": "session_01abcDEF",
+    }
+    # Only the diff crossed over: the session's commit is not in the checkout.
+    assert "a model wrote this" not in git("log", "--format=%s", cwd=tmp_path / "w1")
+    bad = drills.run_build_cloud(
+        drill,
+        2,
+        cfg=cfg,
+        source=repo,
+        work=tmp_path / "w2",
+        remote=str(remote),
+        branch=branches[1],
+    )
+    assert bad["passed"] is False
+    assert "check: reject list: AGENTS.md" in bad["reasons"]
+    assert "not changed: src/x.py" in bad["reasons"]
+    assert drills.describe(bad) == ""

@@ -443,7 +443,7 @@ def describe(trial: Trial) -> str:
     template and the missing fields the model chose, never its words.
     """
     actual = trial["actual"]
-    if trial["passed"] or not actual:
+    if trial["passed"] or "kind" not in actual:
         return ""
     parts = [f"kind {actual['kind']}", f"template {actual['template']}"]
     if actual["missing"]:
@@ -575,55 +575,31 @@ def run_review(
     )
 
 
-def run_build(
+def _judge_build(
     drill: Drill,
     trial: int,
     *,
     cfg: Config,
     source: Path,
     work: Path,
-    role: str,
-    transcript: Path | None = None,
-    runner: Any = None,
-    grader_role: str | None = None,
-    grader_transcript: Path | None = None,
+    run_ok: bool,
+    model: str,
+    cost: float,
+    turns: int,
+    duration_ms: int,
+    handbook: str,
+    charter: str,
+    grader_role: str | None,
+    grader_transcript: Path | None,
+    runner: Any,
+    actual: dict[str, Any] | None = None,
 ) -> Trial:
-    """Prepare the checkout, seed it, run the Builder, check and grade its diff.
+    """Check and grade the working tree's diff, whoever made it.
 
-    When the drill has a rubric and the tests passed, the grader runs in
-    the same checkout as the second judge; its cost is added to the trial's.
+    The plain check, the grading tests from the source clone and, when the
+    drill has a rubric and nothing failed, the grader as the second judge.
     """
-    from guildkit import agents
-
-    inp = drill["input"]
     grade = drill["grade"]
-    directory = Path(drill["directory"])
-    seed = directory / inp["seed"] if "seed" in inp else None
-    prepare_checkout(source, inp["base"], work, seed=seed)
-    if "setup" in inp and _command(inp["setup"], work, 900) != 0:
-        raise DrillError(f"{drill['name']}: the setup command failed")
-    handbook = (work / "AGENTS.md").read_text(encoding="utf-8")
-    charter = (work / cfg["charter"]).read_text(encoding="utf-8")
-    system, user = builder.prompt(
-        role=role,
-        handbook=handbook,
-        charter=charter,
-        brief=brief.render(_drill_brief(drill)),
-    )
-    tests = agents.TestGate(
-        work, cfg["build"]["test_command"], rounds=cfg["build"]["max_test_rounds"]
-    )
-    record = _agent(
-        cfg=cfg,
-        role_name="builder",
-        root=work,
-        system=system,
-        user=user,
-        output_format=None,
-        tests=tests,
-        transcript=transcript,
-        runner=runner,
-    )
     diff = working_diff(work)
     check = builder.check_patch(
         diff,
@@ -642,8 +618,7 @@ def run_build(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
     grade_exit = _command(grade["command"], work, int(grade.get("timeout", 900)))
-    reasons = grade_build(check, _run_ok(record), grade_exit, drill["expect"])
-    cost = record["cost_usd"]
+    reasons = grade_build(check, run_ok, grade_exit, drill["expect"])
     unknown: list[str] = []
     if drill["rubric"] and not reasons:
         if grader_role is None:
@@ -685,12 +660,216 @@ def run_build(
         drill,
         trial,
         reasons,
-        model=record["model"],
+        model=model,
         cost=round(cost, 6),
+        turns=turns,
+        duration_ms=duration_ms,
+        unknown=unknown,
+        actual=actual,
+    )
+
+
+def run_build(
+    drill: Drill,
+    trial: int,
+    *,
+    cfg: Config,
+    source: Path,
+    work: Path,
+    role: str,
+    transcript: Path | None = None,
+    runner: Any = None,
+    grader_role: str | None = None,
+    grader_transcript: Path | None = None,
+) -> Trial:
+    """Prepare the checkout, seed it, run the Builder, check and grade its diff.
+
+    When the drill has a rubric and the tests passed, the grader runs in
+    the same checkout as the second judge; its cost is added to the trial's.
+    """
+    from guildkit import agents
+
+    inp = drill["input"]
+    directory = Path(drill["directory"])
+    seed = directory / inp["seed"] if "seed" in inp else None
+    prepare_checkout(source, inp["base"], work, seed=seed)
+    if "setup" in inp and _command(inp["setup"], work, 900) != 0:
+        raise DrillError(f"{drill['name']}: the setup command failed")
+    handbook = (work / "AGENTS.md").read_text(encoding="utf-8")
+    charter = (work / cfg["charter"]).read_text(encoding="utf-8")
+    system, user = builder.prompt(
+        role=role,
+        handbook=handbook,
+        charter=charter,
+        brief=brief.render(_drill_brief(drill)),
+    )
+    tests = agents.TestGate(
+        work, cfg["build"]["test_command"], rounds=cfg["build"]["max_test_rounds"]
+    )
+    record = _agent(
+        cfg=cfg,
+        role_name="builder",
+        root=work,
+        system=system,
+        user=user,
+        output_format=None,
+        tests=tests,
+        transcript=transcript,
+        runner=runner,
+    )
+    return _judge_build(
+        drill,
+        trial,
+        cfg=cfg,
+        source=source,
+        work=work,
+        run_ok=_run_ok(record),
+        model=record["model"],
+        cost=record["cost_usd"],
         turns=record["num_turns"],
         duration_ms=record["duration_ms"],
-        unknown=unknown,
+        handbook=handbook,
+        charter=charter,
+        grader_role=grader_role,
+        grader_transcript=grader_transcript,
+        runner=runner,
     )
+
+
+# The cloud arm (docs/ab-experiment-plan.md, arm B): a Claude Code cloud
+# session works in a scratch repository and pushes a branch; the same check,
+# grading tests and grader judge its diff as judge the Builder's.
+
+# The base a cloud session starts from is committed by this name, so the
+# session's own commits are the ones after it.
+_SCRATCH_AUTHOR = "Guild drill"
+# Removed from the scratch base: a public scratch repository would run the
+# adopter's workflows and Dependabot, as the spike's did.
+_SCRATCH_STRIP = (".github",)
+_SESSION = re.compile(
+    r"^Claude-Session: https://claude\.ai/code/(session_[A-Za-z0-9]+)$"
+)
+
+
+def cloud_prefix(drill: Drill) -> str:
+    """Return the branch prefix a cloud session of the drill pushes under."""
+    return f"claude/{drill['name']}-"
+
+
+def push_scratch_base(drill: Drill, *, source: Path, work: Path, remote: str) -> str:
+    """Push the drill's seeded checkout, less `.github`, as `base` of `remote`.
+
+    Nothing after the drill's base commit is reachable from it, as in
+    `prepare_checkout`. Returns the commit pushed.
+    """
+    inp = drill["input"]
+    directory = Path(drill["directory"])
+    seed = directory / inp["seed"] if "seed" in inp else None
+    prepare_checkout(source, inp["base"], work, seed=seed)
+    present = [name for name in _SCRATCH_STRIP if (work / name).exists()]
+    if present:
+        git("rm", "-r", "--quiet", *present, cwd=work)
+    git(
+        *_GIT_IDENTITY,
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "scratch base",
+        cwd=work,
+    )
+    head = git("rev-parse", "HEAD", cwd=work).strip()
+    git("push", "--quiet", "--force", remote, "HEAD:refs/heads/base", cwd=work)
+    return head
+
+
+def cloud_branches(drill: Drill, *, remote: str, cwd: Path) -> list[str]:
+    """Return the drill's cloud branches on `remote`, sorted."""
+    prefix = "refs/heads/" + cloud_prefix(drill)
+    found = []
+    for line in git("ls-remote", "--heads", remote, cwd=cwd).splitlines():
+        ref = line.split("\t")[-1].strip()
+        if ref.startswith(prefix):
+            found.append(ref.removeprefix("refs/heads/"))
+    return sorted(found)
+
+
+def run_build_cloud(
+    drill: Drill,
+    trial: int,
+    *,
+    cfg: Config,
+    source: Path,
+    work: Path,
+    remote: str,
+    branch: str,
+    runner: Any = None,
+    grader_role: str | None = None,
+    grader_transcript: Path | None = None,
+) -> Trial:
+    """Grade the diff a cloud session pushed as `branch` of `remote`.
+
+    The checkout is prepared and seeded as for the Builder. The session's
+    diff is what the branch adds to the scratch base, the last commit by
+    `Guild drill` in its history; only that diff is applied here, so the
+    session's own commit, author and message stay behind. Model, cost and
+    turns are the session's and unknown here: `cloud-session`, 0 and 0.
+    """
+    inp = drill["input"]
+    directory = Path(drill["directory"])
+    seed = directory / inp["seed"] if "seed" in inp else None
+    prepare_checkout(source, inp["base"], work, seed=seed)
+    if "setup" in inp and _command(inp["setup"], work, 900) != 0:
+        raise DrillError(f"{drill['name']}: the setup command failed")
+    handbook = (work / "AGENTS.md").read_text(encoding="utf-8")
+    charter = (work / cfg["charter"]).read_text(encoding="utf-8")
+    git("fetch", "--quiet", "--no-tags", remote, branch, cwd=work)
+    base = git(
+        "log",
+        "-1",
+        f"--author={_SCRATCH_AUTHOR}",
+        "--format=%H",
+        "FETCH_HEAD",
+        cwd=work,
+    ).strip()
+    if not base:
+        raise DrillError(f"{drill['name']}: {branch} does not descend from a base")
+    message = git("log", "-1", "--format=%B", "FETCH_HEAD", cwd=work)
+    sessions = [m[1] for line in message.splitlines() if (m := _SESSION.match(line))]
+    actual: dict[str, Any] = {"branch": branch}
+    if sessions:
+        actual["session"] = sessions[-1]
+    patch = work.parent / f"{work.name}.cloud.diff"
+    patch.write_text(
+        git("diff", "--binary", base, "FETCH_HEAD", cwd=work), encoding="utf-8"
+    )
+    applied = True
+    try:
+        if patch.stat().st_size:
+            git("apply", "--index", str(patch.resolve()), cwd=work)
+    except DrillError:
+        applied = False
+    trial_record = _judge_build(
+        drill,
+        trial,
+        cfg=cfg,
+        source=source,
+        work=work,
+        run_ok=applied,
+        model="cloud-session",
+        cost=0.0,
+        turns=0,
+        duration_ms=0,
+        handbook=handbook,
+        charter=charter,
+        grader_role=grader_role,
+        grader_transcript=grader_transcript,
+        runner=runner,
+        actual=actual,
+    )
+    if not applied:
+        trial_record["reasons"].insert(0, "the session's diff does not apply")
+    return trial_record
 
 
 # Scores.

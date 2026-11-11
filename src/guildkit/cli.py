@@ -907,6 +907,12 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
         if args.source is None or args.work is None:
             print("drill-run: --source and --work are needed", file=sys.stderr)
             return 2
+        if args.arm == "cloud" and (args.suite != "build" or not args.scratch):
+            print(
+                "drill-run: --arm cloud is for the build suite and needs --scratch",
+                file=sys.stderr,
+            )
+            return 2
         if RUNNER is None and not any(name in os.environ for name in CREDENTIALS):
             print(f"drill-run: none of {CREDENTIALS} is set", file=sys.stderr)
             return 2
@@ -938,6 +944,27 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
                         role=role,
                         transcript=transcript,
                         runner=RUNNER,
+                    )
+                elif args.arm == "cloud":
+                    # The trial is a branch a cloud session pushed; a session
+                    # that pushed nothing is a failed trial, not a missing one.
+                    branches = drills.cloud_branches(
+                        drill, remote=args.scratch, cwd=args.source
+                    )
+                    if trial > len(branches):
+                        raise drills.DrillError("no branch was pushed for this trial")
+                    result = drills.run_build_cloud(
+                        drill,
+                        trial,
+                        cfg=cfg,
+                        source=args.source,
+                        work=args.work / f"{drill['name']}-{trial}",
+                        remote=args.scratch,
+                        branch=branches[trial - 1],
+                        runner=RUNNER,
+                        grader_role=judge,
+                        grader_transcript=args.work
+                        / f"{drill['name']}-{trial}.grader.transcript.jsonl",
                     )
                 else:
                     work = args.work / f"{drill['name']}-{trial}"
@@ -980,6 +1007,23 @@ def _cmd_drill_run(args: argparse.Namespace) -> int:
                 f"{drills.describe(result)}"
             )
     return 0 if not failed else 1
+
+
+def _cmd_drill_push_base(args: argparse.Namespace) -> int:
+    """Push a build drill's seeded base to a scratch repository, for the cloud arm."""
+    found = [d for d in drills.load(args.dir, "build") if d["name"] == args.drill]
+    if not found:
+        print(f"drill-push-base: no build drill named {args.drill}", file=sys.stderr)
+        return 2
+    with tempfile.TemporaryDirectory(prefix="guild-base-") as tmp:
+        head = drills.push_scratch_base(
+            found[0],
+            source=args.source.resolve(),
+            work=Path(tmp) / "work",
+            remote=args.remote,
+        )
+    print(f"{head} pushed as base; sessions push {drills.cloud_prefix(found[0])}*")
+    return 0
 
 
 def _cmd_drill_score(args: argparse.Namespace) -> int:
@@ -1264,8 +1308,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--models", type=Path, help="a price table for models the config lacks"
     )
+    p.add_argument(
+        "--arm",
+        choices=("sdk", "cloud"),
+        default="sdk",
+        help="the build arm: the SDK Builder, or branches a cloud session pushed",
+    )
+    p.add_argument("--scratch", help="the scratch repository of the cloud arm")
     p.add_argument("--out", type=Path, required=True, help="trials, JSON lines")
     p.set_defaults(func=_cmd_drill_run)
+
+    p = sub.add_parser(
+        "drill-push-base",
+        help="push a build drill's seeded base to a scratch repository",
+    )
+    p.add_argument("--dir", type=Path, required=True, help="the drills directory")
+    p.add_argument("--drill", required=True)
+    p.add_argument("--source", type=Path, required=True, help="a clone of the adopter")
+    p.add_argument("--remote", required=True, help="the scratch repository")
+    p.set_defaults(func=_cmd_drill_push_base)
 
     p = sub.add_parser("drill-score", help="summarise trials as pass@1 and pass^k")
     p.add_argument("--results", type=Path, required=True)
