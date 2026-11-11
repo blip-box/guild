@@ -32,6 +32,13 @@ on:
         description: One drill name, or empty for the whole suite
         type: string
         default: ""
+      federation_rule:
+        # The repository's rule is pinned to refs/heads/main (docs/adopting.md
+        # step 3), so a run from another branch needs a rule of its own,
+        # pinned to that branch; a rule ID is not a secret.
+        description: A federation rule for a run off main, or empty for the repository's
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -70,7 +77,7 @@ jobs:
           sudo apt-get install -y -qq bubblewrap socat
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Identity token
-        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        if: inputs.federation_rule != '' || vars.ANTHROPIC_FEDERATION_RULE_ID != ''
         run: |
           curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
@@ -78,11 +85,11 @@ jobs:
           echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
       - name: Run
         env:
-          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ inputs.federation_rule || vars.ANTHROPIC_FEDERATION_RULE_ID }}
           ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ inputs.federation_rule == '' && vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
           SUITE: ${{ inputs.suite }}
           TRIALS: ${{ inputs.trials }}
           ONLY: ${{ inputs.only }}
@@ -171,7 +178,7 @@ jobs:
           sudo apt-get install -y -qq bubblewrap socat
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Identity token
-        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        if: inputs.federation_rule != '' || vars.ANTHROPIC_FEDERATION_RULE_ID != ''
         run: |
           curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
@@ -179,11 +186,11 @@ jobs:
           echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
       - name: Probe
         env:
-          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ inputs.federation_rule || vars.ANTHROPIC_FEDERATION_RULE_ID }}
           ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ inputs.federation_rule == '' && vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
         run: |
           [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
           [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID

@@ -10,7 +10,16 @@ in CI on its own, and nothing here is merged as a feature.
    the step summary shows the curl exit code. Pass: curl fails and the run
    ends with subtype `success`.
 
-       gh workflow run drills.yml --ref spike/m0 -f suite=sandbox
+       gh workflow run drills.yml --ref spike/m0 -f suite=sandbox \
+         -f federation_rule=fdrl_...
+
+   The repository's federation rule is pinned to `refs/heads/main`, so the
+   run needs a second rule on the Console's Workload identity page: the
+   same issuer, service account and workspace, the subject
+   `repo:blip-box@212885052/guild@1440301569:ref:refs/heads/spike/m0`
+   (exact, from `gh api repos/blip-box/guild/actions/oidc/customization/sub`),
+   scope `workspace:developer`. Its ID goes in `federation_rule`. Archive
+   it when the spike branch is done.
 2. `cloud-task/`: one Claude Code scheduled task fired by curl against a
    scratch repository. `README.md` there has the steps.
 3. `systemone_probe.py`: one Jev call and one OpenAI Decisions call with a
