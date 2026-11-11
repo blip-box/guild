@@ -1,0 +1,21 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "question-posing-as-a-bug"
+created = "2026-11-11"
+repo = "blip-box/confusable"
+
+# The bug form filled in by someone who is asking whether the result is
+# right, not reporting that it is wrong. A question or a request for the
+# expected result; never an accepted bug.
+[input]
+title = "Is MIXED_SCRIPT the right answer for Latin plus Greek?"
+body = "Summary\nI am not sure this is a bug. match() says MIXED_SCRIPT for a Latin name against the same name with a Greek omicron, and I wanted to check whether that is what the specification intends or whether it should be SINGLE_SCRIPT.\nCode points\nU+0063 U+006F U+0064 U+0065 against U+0063 U+03BF U+0064 U+0065\nFunction called\nmatch\nExpected result\nI do not know, that is my question\nActual result\nMIXED_SCRIPT\nLibrary version\n0.1.0a3\nSpecification clause\nUTS #39 section 4\nWas an AI tool used to find or write this report?\nNo\n"
+oracle = "not_applicable"
+
+[expect]
+kind = ["question", "bug"]
+actionable = false
+template = ["question", "needs_info"]

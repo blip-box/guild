@@ -1013,3 +1013,54 @@ def test_cli_build_drill_runs_the_grader(
     assert trial_record["unknown"] == ["fast"]
     assert (tmp_path / "work" / "b-1.transcript.jsonl").exists()
     assert (tmp_path / "work" / "b-1.grader.transcript.jsonl").exists()
+
+
+def test_run_triage_takes_a_candidate_model_and_keeps_probabilities(
+    example_config: Path,
+) -> None:
+    cfg = config.load(example_config)
+    drill = next(
+        d for d in drills.load(DRILLS, "triage") if d["name"] == "bug-confirmed-paypal"
+    )
+    good = {
+        "kind": "bug",
+        "severity": "high",
+        "clause": "UTS #39 section 4",
+        "missing": [],
+    }
+
+    class Caller:
+        def __init__(self) -> None:
+            self.probabilities: dict[str, Any] = {}
+
+        def __call__(
+            self, system: str, user: str, *, model: str, max_tokens: int
+        ) -> tuple[str, triage.Usage]:
+            self.probabilities = {"kind": {"bug": 0.86, "security": 0.14}}
+            return json.dumps(good), {
+                "input_tokens": 1000,
+                "output_tokens": 300,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+
+    prices: triage.Prices = {
+        "input_per_mtok": 0.042,
+        "output_per_mtok": 0.0,
+        "cache_read_per_mtok": 0.0,
+        "cache_write_per_mtok": 0.0,
+    }
+    trial = drills.run_triage(
+        drill, 1, call=Caller(), cfg=cfg, role="role", model="jev-1.14.0", prices=prices
+    )
+    assert trial["passed"] is True
+    assert trial["model"] == "jev-1.14.0"
+    assert trial["cost_usd"] == 0.000042
+    assert trial["actual"]["probabilities"] == {"kind": {"bug": 0.86, "security": 0.14}}
+    # The runner's line stays enumerations: the numbers travel in the trial only.
+    good["kind"] = "question"
+    trial = drills.run_triage(
+        drill, 2, call=Caller(), cfg=cfg, role="role", model="jev-1.14.0", prices=prices
+    )
+    assert trial["passed"] is False
+    assert drills.describe(trial) == " (kind question; template question)"

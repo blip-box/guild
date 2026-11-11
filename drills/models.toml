@@ -1,0 +1,21 @@
+# Prices for models the adopters' guild.toml does not pin: candidates the
+# drills compare before one is chosen (docs/ab-experiment-plan.md, M1).
+# `guildkit drill-run --models drills/models.toml` reads it; nothing else
+# does. US dollars per million tokens, as the vendors list them.
+
+# TypeSafe Jev: input billed, output free (docs.typesafe.ai, 2026-11-11).
+[models."jev-1.14.0"]
+input_per_mtok = 0.042
+output_per_mtok = 0.0
+cache_read_per_mtok = 0.0
+cache_write_per_mtok = 0.0
+
+# OpenAI Decisions API on gpt-6-luna: input billed, output not charged
+# (developers.openai.com, 2026-11-11). Cached input is discounted, at a rate
+# not recorded when the memo was written; it is charged at the input rate
+# here until a run shows cached tokens and the rate is looked up.
+[models."gpt-6-luna"]
+input_per_mtok = 0.10
+output_per_mtok = 0.0
+cache_read_per_mtok = 0.10
+cache_write_per_mtok = 0.0

@@ -230,3 +230,17 @@ def test_shadow_targets_are_optional_and_checked(example_config: Path) -> None:
         )
     with pytest.raises(config.ConfigError, match=re.escape("shadow: no role table")):
         config.parse(text[:start] + "[shadow]\ncanary_passes = 0\n" + text[end:])
+
+
+def test_load_models_reads_a_price_table_alone(root: Path, tmp_path: Path) -> None:
+    prices = config.load_models(root / "drills" / "models.toml")
+    assert set(prices) == {"jev-1.14.0", "gpt-6-luna"}
+    assert prices["jev-1.14.0"]["input_per_mtok"] == 0.042
+    assert prices["jev-1.14.0"]["output_per_mtok"] == 0.0
+    assert prices["gpt-6-luna"]["input_per_mtok"] == 0.10
+    other = tmp_path / "models.toml"
+    other.write_text('[triage]\nmodel = "x"\n', encoding="ascii")
+    with pytest.raises(config.ConfigError, match="unexpected tables"):
+        config.load_models(other)
+    with pytest.raises(config.ConfigError, match=r"missing\.toml"):
+        config.load_models(tmp_path / "missing.toml")

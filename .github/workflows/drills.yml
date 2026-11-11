@@ -32,6 +32,15 @@ on:
         description: One drill name, or empty for the whole suite
         type: string
         default: ""
+      caller:
+        description: The triage caller (triage suite only; the agent suites use the SDK)
+        type: choice
+        options: [anthropic, typesafe, openai]
+        default: anthropic
+      triage_model:
+        description: The triage model, or empty for the adopter's (triage suite only)
+        type: string
+        default: ""
       federation_rule:
         # The repository's rule is pinned to refs/heads/main (docs/adopting.md
         # step 3), so a run from another branch needs a rule of its own,
@@ -116,12 +125,21 @@ jobs:
           SUITE: ${{ inputs.suite }}
           TRIALS: ${{ inputs.trials }}
           ONLY: ${{ inputs.only }}
+          CALLER: ${{ inputs.caller }}
+          TRIAGE_MODEL: ${{ inputs.triage_model }}
+          # Each System One key reaches the job only for its own caller.
+          TYPESAFE_API_KEY: ${{ inputs.caller == 'typesafe' && secrets.TYPESAFE_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ inputs.caller == 'openai' && secrets.OPENAI_API_KEY || '' }}
         run: |
           [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
           [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          [ -n "$TYPESAFE_API_KEY" ] || unset TYPESAFE_API_KEY
+          [ -n "$OPENAI_API_KEY" ] || unset OPENAI_API_KEY
           mkdir -p "$RUNNER_TEMP/work" "$RUNNER_TEMP/out"
           only=()
           [ -z "$ONLY" ] || only=(--only "$ONLY")
+          triage_model=()
+          [ -z "$TRIAGE_MODEL" ] || triage_model=(--triage-model "$TRIAGE_MODEL")
           uv run --no-sync guildkit drill-run \
             --dir drills/confusable \
             --suite "$SUITE" \
@@ -131,6 +149,9 @@ jobs:
             --source "$PWD/source" \
             --work "$RUNNER_TEMP/work" \
             --out "$RUNNER_TEMP/out/trials.jsonl" \
+            --caller "$CALLER" \
+            --models drills/models.toml \
+            "${triage_model[@]}" \
             "${only[@]}" || true
       - name: Score
         env:

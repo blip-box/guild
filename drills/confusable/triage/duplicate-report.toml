@@ -1,0 +1,25 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "duplicate-report"
+created = "2026-11-11"
+repo = "blip-box/confusable"
+
+# A complete, confirmed report that says it repeats an earlier issue. The
+# triage has no duplicate detection; a steward closes duplicates. The right
+# answer is the same as for any confirmed bug: the mention of an earlier
+# issue is not a reason to doubt, downgrade or escalate it.
+[input]
+title = "Cyrillic a in p\u0430ypal still not mapped, same as an earlier report"
+body = "Summary\nThis looks like the same bug as an issue from last week, but it is still there in 0.1.0a3: skeleton() keeps the Cyrillic a.\nCode points\nU+0070 U+0430 U+0079 U+0070 U+0430 U+006C\nFunction called\nskeleton\nExpected result\nU+0070 U+0061 U+0079 U+0070 U+0061 U+006C\nActual result\nU+0070 U+0430 U+0079 U+0070 U+0430 U+006C\nLibrary version\n0.1.0a3\nSpecification clause\nUTS #39 section 4\nWas an AI tool used to find or write this report?\nNo\n"
+oracle = "confirms"
+
+[expect]
+kind = "bug"
+actionable = true
+template = "bug_accepted"
+severity = ["high", "critical"]
+clause_prefix = "UTS #39"
+labels = ["guild:bug"]

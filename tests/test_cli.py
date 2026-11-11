@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from guildkit import cli
+import pytest
+
+from guildkit import cli, drills
 
 EVENT = {
     "issue": {
@@ -226,3 +228,72 @@ def test_triage_without_a_key_fails_cleanly(
         ]
     )
     assert code == 2
+
+
+def test_drill_run_with_a_system_one_caller(
+    tmp_path: Path,
+    root: Path,
+    example_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    drills_dir = root / "drills" / "confusable"
+    results = tmp_path / "results.jsonl"
+    common = [
+        "drill-run",
+        "--dir",
+        str(drills_dir),
+        "--suite",
+        "triage",
+        "--config",
+        str(example_config),
+        "--roles",
+        str(root / "roles"),
+        "--only",
+        "bug-confirmed-paypal",
+        "--out",
+        str(results),
+    ]
+    # A candidate model needs a price table.
+    code = cli.main([*common, "--caller", "typesafe", "--triage-model", "jev-1.14.0"])
+    assert code == 2
+    assert "no prices for jev-1.14.0" in capsys.readouterr().err
+    models = str(root / "drills" / "models.toml")
+    # And its caller needs its own key, not the Anthropic ones.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-used")
+    code = cli.main(
+        [
+            *common,
+            "--caller",
+            "typesafe",
+            "--triage-model",
+            "jev-1.14.0",
+            "--models",
+            models,
+        ]
+    )
+    assert code == 2
+    assert "TYPESAFE_API_KEY" in capsys.readouterr().err
+    # A canned reply runs the drill as the candidate model, priced from the table.
+    reply = tmp_path / "reply.json"
+    reply.write_text(
+        '{"kind": "bug", "severity": "high", "clause": "UTS #39 section 4",'
+        ' "missing": []}',
+        encoding="ascii",
+    )
+    code = cli.main(
+        [
+            *common,
+            "--reply",
+            str(reply),
+            "--triage-model",
+            "jev-1.14.0",
+            "--models",
+            models,
+        ]
+    )
+    assert code == 0
+    (trial,) = drills.read_trials(results)
+    assert trial["model"] == "jev-1.14.0"
+    assert trial["cost_usd"] == 0.0  # the canned caller reports no tokens

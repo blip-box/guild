@@ -373,9 +373,23 @@ def _trial(
 
 
 def run_triage(
-    drill: Drill, trial: int, *, call: triage.Caller, cfg: Config, role: str
+    drill: Drill,
+    trial: int,
+    *,
+    call: triage.Caller,
+    cfg: Config,
+    role: str,
+    model: str | None = None,
+    prices: triage.Prices | None = None,
 ) -> Trial:
-    """Run the triage call on the drill's issue and grade the record."""
+    """Run the triage call on the drill's issue and grade the record.
+
+    `model` and `prices` override the config's triage model and its price
+    table, for a candidate model the adopter has not pinned. A caller that
+    keeps `probabilities` (the System One callers) has them added to the
+    trial's `actual`, as numbers, so a failed trial's record says how sure
+    the model was; `describe` leaves them out of the runner's line.
+    """
     inp = drill["input"]
     issue = {
         "number": int(inp.get("number", 0)),
@@ -390,7 +404,7 @@ def run_triage(
     }
     snap = snapshot.snapshot(drill["repo"], issue)
     user = snapshot.render(snap) + f"\nOracle check: {inp['oracle']}\n"
-    model = cfg["triage"]["model"]
+    model = model or cfg["triage"]["model"]
     record, usage, parsed = triage.triage(
         call,
         system=role,
@@ -402,11 +416,14 @@ def run_triage(
     reasons = grade_triage(record, drill["expect"])
     if not parsed:
         reasons.append("the reply did not parse")
-    cost = cost_usd(usage, cfg["prices"][model])
-    actual = {
+    cost = cost_usd(usage, prices or cfg["prices"][model])
+    actual: dict[str, Any] = {
         key: record[key]
         for key in ("kind", "severity", "clause", "missing", "template")
     }
+    probabilities = getattr(call, "probabilities", None)
+    if isinstance(probabilities, dict) and probabilities:
+        actual["probabilities"] = probabilities
     return _trial(
         drill,
         trial,

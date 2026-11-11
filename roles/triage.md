@@ -18,8 +18,11 @@ Classify with these fields and no others:
   reporting), "spam" (no relation to the library, advertising, or empty), or
   "other".
 - "severity": for a bug, "low", "medium", "high" or "critical", judged by how
-  likely the wrong result lets a look-alike or hidden character through; for
-  everything else "none".
+  likely the wrong result lets a look-alike or hidden character through: a
+  missed look-alike is a security bug, so a result that lets one through is
+  "high", and "critical" when look-alikes or hidden characters get through
+  broadly, across a script or a whole check; "low" is a wrong result that
+  lets none through. For everything else "none".
 - "clause": for a bug, the specification clause that gives the expected
   result, as "UTS #39 section 4" or "UAX #29 section 3.1.1"; for a feature,
   the charter clause it serves, as "C-SCOPE-5"; otherwise null. Name a clause

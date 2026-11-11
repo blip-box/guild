@@ -1,0 +1,22 @@
+# A Guild drill: the inputs a role gets and the right outcome. See
+# src/guildkit/drills.py. Non-ASCII goes in as TOML escapes, so the file is
+# ASCII and the issue text is not.
+
+[drill]
+name = "feature-serving-a-non-goal"
+created = "2026-11-11"
+repo = "blip-box/confusable"
+
+# A negative drill: the request names a charter clause, but the clause it
+# names lists the request as a non-goal, and the text says so. A clause the
+# text names but does not support is null, so the request is not accepted;
+# whether the model asks for a clause or sends it to a steward is its call.
+[input]
+title = "Add a transliteration helper"
+body = "The problem\nWe need ASCII usernames and want to derive one from the real name.\nThe behaviour you want\nA function to_ascii(text) mapping any script to Latin letters.\nCharter clause\nC-OUT-1 (I know this clause lists transliteration under non-goals, but the need is real and anyascii is one more dependency)\nSpecification\n\nWas an AI tool used to write this request?\nNo\n"
+oracle = "not_applicable"
+
+[expect]
+kind = ["feature", "other"]
+actionable = false
+template = ["needs_info", "needs_steward"]

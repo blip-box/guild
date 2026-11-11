@@ -254,23 +254,7 @@ def parse(text: str) -> Config:
     if release["prerelease"] not in ("", "a", "b", "rc"):
         raise ConfigError("release.prerelease: expected a, b, rc or nothing")
 
-    models = _table(data.get("models"), "models")
-    prices: dict[str, Prices] = {}
-    for model_id, table in models.items():
-        where = f"models.{model_id}"
-        if not _MODEL_ID.match(model_id):
-            raise ConfigError(f"{where}: not a model ID")
-        price_table = _table(table, where)
-        prices[model_id] = {
-            "input_per_mtok": _get(price_table, "input_per_mtok", float, where),
-            "output_per_mtok": _get(price_table, "output_per_mtok", float, where),
-            "cache_read_per_mtok": _get(
-                price_table, "cache_read_per_mtok", float, where
-            ),
-            "cache_write_per_mtok": _get(
-                price_table, "cache_write_per_mtok", float, where
-            ),
-        }
+    prices = _prices(_table(data.get("models"), "models"))
     if triage["model"] not in prices:
         raise ConfigError(f"models: no prices for triage.model {triage['model']}")
     for role, agent in agents.items():
@@ -299,6 +283,43 @@ def parse(text: str) -> Config:
         "prices": prices,
         "shadow": shadow,
     }
+
+
+def _prices(models: dict[str, Any]) -> dict[str, Prices]:
+    """Return the price table in a `[models]` table."""
+    prices: dict[str, Prices] = {}
+    for model_id, table in models.items():
+        where = f"models.{model_id}"
+        if not _MODEL_ID.match(model_id):
+            raise ConfigError(f"{where}: not a model ID")
+        price_table = _table(table, where)
+        prices[model_id] = {
+            "input_per_mtok": _get(price_table, "input_per_mtok", float, where),
+            "output_per_mtok": _get(price_table, "output_per_mtok", float, where),
+            "cache_read_per_mtok": _get(
+                price_table, "cache_read_per_mtok", float, where
+            ),
+            "cache_write_per_mtok": _get(
+                price_table, "cache_write_per_mtok", float, where
+            ),
+        }
+    return prices
+
+
+def load_models(path: Path) -> dict[str, Prices]:
+    """Return the price table in a file holding only a `[models]` table.
+
+    The drills read such a file for models outside the adopter's guild.toml,
+    so that a candidate model can be drilled before it is pinned anywhere.
+    """
+    try:
+        data = tomllib.loads(path.read_text(encoding="ascii"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+        raise ConfigError(f"{path}: {e}") from e
+    unknown = sorted(set(data) - {"models"})
+    if unknown:
+        raise ConfigError(f"{path}: unexpected tables {unknown}")
+    return _prices(_table(data.get("models"), "models"))
 
 
 def load(path: Path) -> Config:
