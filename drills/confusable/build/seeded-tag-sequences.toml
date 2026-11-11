@@ -40,7 +40,6 @@ tests_from = "a27fc174cdfc459bef4f79498db1a7c83fdb64a1"
 test_paths = ["tests/test_invisible.py"]
 
 [expect]
-tier = "T1"
 must_change = ["src/confusable/_invisible.py"]
 must_not_change = ["src/confusable/_data/emoji.py"]
 
