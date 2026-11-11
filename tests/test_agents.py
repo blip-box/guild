@@ -234,6 +234,12 @@ def test_options_give_the_sdk_nothing_from_disk(checkout: Path, tmp_path: Path) 
     assert set(opts.hooks) == {"PreToolUse", "Stop"}
     assert opts.hooks["Stop"][0].timeout == tests.timeout + 60
     assert opts.output_format is None
+    assert opts.sandbox is not None
+    assert dict(opts.sandbox) == agents.SANDBOX
+    assert agents.SANDBOX["enabled"] is True
+    assert agents.SANDBOX["allowUnsandboxedCommands"] is False
+    assert agents.SANDBOX["failIfUnavailable"] is True
+    assert agents.SANDBOX["network"] == {"allowedDomains": [], "deniedDomains": []}
     with pytest.raises(ValueError, match="effort"):
         agents.options(
             root=checkout,

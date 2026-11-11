@@ -38,6 +38,7 @@ from claude_agent_sdk.types import (
     HookInput,
     HookJSONOutput,
     PermissionResult,
+    SandboxSettings,
     SyncHookJSONOutput,
     ToolPermissionContext,
 )
@@ -80,6 +81,22 @@ NEVER = [
 MAX_REPEATS = 8
 # How much of the test output the Builder is shown when it may not stop yet.
 OUTPUT_TAIL = 4000
+# The Bash sandbox: bubblewrap on Linux, Seatbelt on macOS. Every Bash
+# command runs in its own network namespace behind a proxy whose allowlist
+# is empty, so a command reaches no host; the model's own calls are the
+# CLI's, outside the sandbox. The model may not ask to run a command
+# unsandboxed, and a sandbox that cannot start ends the run instead of
+# running commands without it. `failIfUnavailable` is not in the SDK's
+# TypedDict, but the SDK hands the whole table to the CLI's --settings.
+# The Stop hook's test command runs outside the sandbox, in the shell.
+SANDBOX: dict[str, Any] = {
+    "enabled": True,
+    "autoAllowBashIfSandboxed": False,
+    "allowUnsandboxedCommands": False,
+    "excludedCommands": [],
+    "failIfUnavailable": True,
+    "network": {"allowedDomains": [], "deniedDomains": []},
+}
 
 # Bash commands the gate refuses outright. The checkout holds no token and the
 # apply job re-checks the whole diff, so this list is the obvious cases, not
@@ -317,7 +334,8 @@ def options(
     `verbatim_prompts` keeps the prompt as written: no `@path` expansion and
     no slash commands, because the brief holds text an outsider wrote.
     `max_budget_usd` is the SDK's own estimate and a brake, not the cap; the
-    ledger prices the tokens itself.
+    ledger prices the tokens itself. `sandbox` is `SANDBOX`: Bash commands
+    run with no network at all.
     """
     if effort not in EFFORTS:
         raise ValueError(f"effort {effort!r}")
@@ -345,6 +363,7 @@ def options(
         skills=[],
         verbatim_prompts=True,
         output_format=output_format,
+        sandbox=cast(SandboxSettings, dict(SANDBOX)),
         env={
             "CLAUDE_CONFIG_DIR": str(config_dir),
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",

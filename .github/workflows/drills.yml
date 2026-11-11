@@ -57,6 +57,15 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uv sync --locked --no-default-groups --extra agents
+      - name: Sandbox dependencies
+        # The Bash sandbox (agents.SANDBOX) is bubblewrap on Linux and needs
+        # socat for its proxy; Ubuntu's AppArmor may refuse the unprivileged
+        # user namespace it creates, so that restriction is lifted. Without
+        # them the run ends instead of running commands unsandboxed.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Identity token
         if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
         run: |

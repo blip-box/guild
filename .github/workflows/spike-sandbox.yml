@@ -1,0 +1,59 @@
+# M0 spike 1 (docs/ab-experiment-plan.md): prove that the Bash sandbox starts
+# on ubuntu-latest and blocks egress. Started by hand; one short turn on the
+# triage model, a few cents. Needs the model credential as the Drills
+# workflow does.
+name: Spike sandbox
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    name: probe
+    if: vars.GUILD_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # this repository
+      id-token: write # workload identity federation for the model credential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --locked --no-default-groups --extra agents
+      - name: Sandbox dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Identity token
+        if: vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+        run: |
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+      - name: Probe
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID == '' && secrets.ANTHROPIC_API_KEY || '' }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$ANTHROPIC_WORKSPACE_ID" ] || unset ANTHROPIC_WORKSPACE_ID
+          status=0
+          uv run --no-sync python spikes/sandbox_probe.py > "$RUNNER_TEMP/probe.log" || status=$?
+          {
+            echo "## Spike: sandbox"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/probe.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/probe.log"
+          exit "$status"
