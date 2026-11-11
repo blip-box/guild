@@ -20,6 +20,15 @@ in CI on its own, and nothing here is merged as a feature.
    (exact, from `gh api repos/blip-box/guild/actions/oidc/customization/sub`),
    scope `workspace:developer`. Its ID goes in `federation_rule`. Archive
    it when the spike branch is done.
+
+   Result, 2026-11-11: pass (run 43006920737). curl got `CONNECT tunnel
+   failed, response 403` from the sandbox proxy, the plain socket had no
+   name resolution, the sandbox logged `deny network-outbound
+   example.com:443`, and the run ended with subtype `success`. Two earlier
+   runs found what the dependency step now handles: the federation rule
+   (run 42991205128) and Ubuntu 26.04's `bwrap-userns-restrict` AppArmor
+   profile, which left the sandbox's seccomp helper without capabilities
+   in its nested namespace (run 43005981086).
 2. `cloud-task/`: one Claude Code scheduled task fired by curl against a
    scratch repository. `README.md` there has the steps.
 3. `systemone_probe.py`: one Jev call and one OpenAI Decisions call with a
