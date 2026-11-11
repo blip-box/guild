@@ -288,7 +288,19 @@ def test_options_give_the_sdk_nothing_from_disk(checkout: Path, tmp_path: Path) 
     assert opts.hooks["Stop"][0].timeout == tests.timeout + 60
     assert opts.output_format is None
     assert opts.sandbox is not None
-    assert dict(opts.sandbox) == agents.SANDBOX
+    sandbox = dict(opts.sandbox)
+    # The run's own uv cache and temp directory are the only writes allowed
+    # outside the checkout, and the commands are pointed at them.
+    assert sandbox.pop("filesystem") == {
+        "allowWrite": [
+            str(tmp_path / "cfg" / "uv-cache"),
+            str(tmp_path / "cfg" / "tmp"),
+        ]
+    }
+    assert sandbox == agents.SANDBOX
+    assert opts.env["UV_CACHE_DIR"] == str(tmp_path / "cfg" / "uv-cache")
+    assert opts.env["TMPDIR"] == str(tmp_path / "cfg" / "tmp")
+    assert (tmp_path / "cfg" / "uv-cache").is_dir()
     assert agents.SANDBOX["enabled"] is True
     assert agents.SANDBOX["allowUnsandboxedCommands"] is False
     assert agents.SANDBOX["failIfUnavailable"] is True

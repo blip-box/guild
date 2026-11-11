@@ -144,6 +144,11 @@ OUTPUT_TAIL = 4000
 # running commands without it. `failIfUnavailable` is not in the SDK's
 # TypedDict, but the SDK hands the whole table to the CLI's --settings.
 # The Stop hook's test command runs outside the sandbox, in the shell.
+# Writes are allowed in the checkout and in the directory TMPDIR names;
+# `options` adds a uv cache and a temp directory of the run's own under
+# `filesystem.allowWrite` (a key the SDK's TypedDict lacks and forwards
+# too), because the runner's uv cache is outside both and uv takes a lock
+# there before anything else, and pytest's temp fixtures need TMPDIR.
 SANDBOX: dict[str, Any] = {
     "enabled": True,
     "autoAllowBashIfSandboxed": False,
@@ -420,6 +425,14 @@ def options(
     if tests is not None:
         hooks["Stop"] = [HookMatcher(hooks=[tests.stop], timeout=tests.timeout + 60)]
     builder = role == "builder"
+    uv_cache = config_dir / "uv-cache"
+    tmp = config_dir / "tmp"
+    for directory in (uv_cache, tmp):
+        directory.mkdir(parents=True, exist_ok=True)
+    sandbox: dict[str, Any] = {
+        **SANDBOX,
+        "filesystem": {"allowWrite": [str(uv_cache), str(tmp)]},
+    }
     return ClaudeAgentOptions(
         tools=list(TOOLS[role]),
         allowed_tools=[],
@@ -441,12 +454,15 @@ def options(
         skills=list(SKILLS) if builder else [],
         verbatim_prompts=True,
         output_format=output_format,
-        sandbox=cast(SandboxSettings, dict(SANDBOX)),
+        sandbox=cast(SandboxSettings, sandbox),
         env={
             "CLAUDE_CONFIG_DIR": str(config_dir),
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "DISABLE_TELEMETRY": "1",
             "DISABLE_AUTOUPDATER": "1",
+            # Where sandboxed commands may write besides the checkout.
+            "UV_CACHE_DIR": str(uv_cache),
+            "TMPDIR": str(tmp),
             # Only the subagents defined here exist, one level deep, few at
             # a time: a tree of agents is not a Builder.
             "CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS": "1",
