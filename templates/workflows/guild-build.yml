@@ -290,8 +290,14 @@ jobs:
         # namespace still does not work; without it the run would end
         # instead of running commands unsandboxed.
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap socat
+          # The runner's package mirror sometimes fails to resolve; retry.
+          for attempt in 1 2 3 4 5 6; do
+            if sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap socat; then
+              break
+            fi
+            [ "$attempt" -lt 6 ] || exit 1
+            sleep 20
+          done
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
             sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
@@ -471,8 +477,14 @@ jobs:
         # namespace still does not work; without it the run would end
         # instead of running commands unsandboxed.
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap socat
+          # The runner's package mirror sometimes fails to resolve; retry.
+          for attempt in 1 2 3 4 5 6; do
+            if sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap socat; then
+              break
+            fi
+            [ "$attempt" -lt 6 ] || exit 1
+            sleep 20
+          done
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
             sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
@@ -684,8 +696,14 @@ jobs:
         # namespace still does not work; without it the run would end
         # instead of running commands unsandboxed.
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap socat
+          # The runner's package mirror sometimes fails to resolve; retry.
+          for attempt in 1 2 3 4 5 6; do
+            if sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap socat; then
+              break
+            fi
+            [ "$attempt" -lt 6 ] || exit 1
+            sleep 20
+          done
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
             sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
@@ -927,8 +945,14 @@ jobs:
         # namespace still does not work; without it the run would end
         # instead of running commands unsandboxed.
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap socat
+          # The runner's package mirror sometimes fails to resolve; retry.
+          for attempt in 1 2 3 4 5 6; do
+            if sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap socat; then
+              break
+            fi
+            [ "$attempt" -lt 6 ] || exit 1
+            sleep 20
+          done
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
             sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
