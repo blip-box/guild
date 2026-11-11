@@ -1,0 +1,44 @@
+{
+  "cost_usd": 4.733207,
+  "cutoff": "2026-06-01",
+  "drills": [
+    {
+      "cost_usd": 2.171418,
+      "created": "2026-11-03",
+      "drill": "seeded-bidi-fast-path",
+      "pass_k": false,
+      "pass_rate": 0.8,
+      "passes": 4,
+      "suite": "build",
+      "trials": 5,
+      "undecided": 0
+    },
+    {
+      "cost_usd": 1.252935,
+      "created": "2026-11-11",
+      "drill": "seeded-mark-count",
+      "pass_k": true,
+      "pass_rate": 1.0,
+      "passes": 5,
+      "suite": "build",
+      "trials": 5,
+      "undecided": 0
+    },
+    {
+      "cost_usd": 1.308854,
+      "created": "2026-11-11",
+      "drill": "seeded-tag-sequences",
+      "pass_k": true,
+      "pass_rate": 1.0,
+      "passes": 5,
+      "suite": "build",
+      "trials": 5,
+      "undecided": 0
+    }
+  ],
+  "fresh_drills": 3,
+  "fresh_pass_k": 0.6667,
+  "pass_at_1": 0.9333,
+  "pass_k": 0.6667,
+  "suite": "build"
+}
