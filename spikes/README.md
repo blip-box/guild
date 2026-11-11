@@ -77,5 +77,9 @@ in CI on its own, and nothing here is merged as a feature.
    hook's test run, and cost 0.07 USD in 5 turns, with the gate and the
    sandbox on as in any Builder run. Both runs used the same working
    directory path, which the SDK keys session files by; a different path
-   was not tried. Not tried either: resuming the file in a steward's own
-   terminal, which means placing it under `~/.claude/projects/` there.
+   was not tried. In a steward's own terminal, half shown: with the
+   files copied into `~/.claude/projects/handoff-probe`, Claude Code
+   2.1.265 opened the session by its ID from a local checkout and showed
+   the whole history, falling back to its own Opus because it does not
+   know `claude-opus-5-5`; no message was sent, so continuing the
+   conversation there is not shown.
