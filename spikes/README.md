@@ -55,3 +55,27 @@ in CI on its own, and nothing here is merged as a feature.
    vendors were unsure here; the criteria must say that a missed
    look-alike is a security bug). Neither vendor followed the injected
    instructions.
+4. `handoff_probe.py`, run by the Drills workflow's `handoff` suite, after
+   M4: can a steward, or a later job, take over a Builder's conversation?
+   The first dispatch runs one build trial and keeps the SDK's session
+   files, the diff and the session ID as an artifact; the second, with
+   `resume_run` set to the first run's ID, restores them on a fresh runner
+   and resumes the session with a steward's comment as the next prompt.
+
+       gh workflow run drills.yml --ref spike/m0 -f suite=handoff \
+         -f federation_rule=fdrl_...
+       gh workflow run drills.yml --ref spike/m0 -f suite=handoff \
+         -f resume_run=RUN -f federation_rule=fdrl_...
+
+   Result, 2026-11-11: pass (runs 43083032978 and 43083469369). The first
+   run, `seeded-mark-count`, took 9 turns and 0.24 USD and left one
+   session file of 326 kB under
+   `projects/-home-runner-work--temp-handoff-checkout/`, named by the
+   session ID, with a `tool-results` directory beside it. The second run
+   kept the session ID, named both changed files and the test case from
+   memory before any tool call, added the steward's line, passed the Stop
+   hook's test run, and cost 0.07 USD in 5 turns, with the gate and the
+   sandbox on as in any Builder run. Both runs used the same working
+   directory path, which the SDK keys session files by; a different path
+   was not tried. Not tried either: resuming the file in a steward's own
+   terminal, which means placing it under `~/.claude/projects/` there.
