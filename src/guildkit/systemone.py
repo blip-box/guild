@@ -20,7 +20,7 @@ text that holds none is not asked; and the missing fields a feature can lack
 are its own, not the bug form's. The two missing fields the policy derives
 from the clause (`citation` for a bug, `clause` for a feature) are not asked:
 a model that both chooses a clause and reports it missing contradicts itself,
-and the first spike saw one do so.
+and a first trial saw one do so.
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 # Prices for models the adopters' guild.toml does not pin: candidates the
-# drills compare before one is chosen (docs/ab-experiment-plan.md, M1).
+# drills compare before one is chosen.
 # `guildkit drill-run --models drills/models.toml` reads it; nothing else
 # does. US dollars per million tokens, as the vendors list them.
 
