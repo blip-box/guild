@@ -111,10 +111,19 @@ jobs:
       - name: Identity token
         if: inputs.federation_rule != '' || vars.ANTHROPIC_FEDERATION_RULE_ID != ''
         run: |
-          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
-            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          # GitHub's token lives about five minutes, so a refresher keeps the
+          # file fresh for a long run; the harness also fetches a new one
+          # before each agent run (agents.refresh_identity_token).
+          fetch() {
+            curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+              | jq -r .value > "$RUNNER_TEMP/identity-token.new" \
+              && mv -f "$RUNNER_TEMP/identity-token.new" "$RUNNER_TEMP/identity-token"
+          }
+          fetch
           echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+          export -f fetch
+          nohup bash -c 'while sleep 120; do fetch; done' >/dev/null 2>&1 &
       - name: Run
         env:
           ANTHROPIC_FEDERATION_RULE_ID: ${{ inputs.federation_rule || vars.ANTHROPIC_FEDERATION_RULE_ID }}
@@ -281,10 +290,19 @@ jobs:
       - name: Identity token
         if: steps.diagnose.outputs.nested_ok == 'true' && (inputs.federation_rule != '' || vars.ANTHROPIC_FEDERATION_RULE_ID != '')
         run: |
-          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
-            | jq -r .value > "$RUNNER_TEMP/identity-token"
+          # GitHub's token lives about five minutes, so a refresher keeps the
+          # file fresh for a long run; the harness also fetches a new one
+          # before each agent run (agents.refresh_identity_token).
+          fetch() {
+            curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+              | jq -r .value > "$RUNNER_TEMP/identity-token.new" \
+              && mv -f "$RUNNER_TEMP/identity-token.new" "$RUNNER_TEMP/identity-token"
+          }
+          fetch
           echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/identity-token" >> "$GITHUB_ENV"
+          export -f fetch
+          nohup bash -c 'while sleep 120; do fetch; done' >/dev/null 2>&1 &
       - name: Nested user namespaces unavailable
         if: steps.diagnose.outputs.nested_ok != 'true'
         run: |

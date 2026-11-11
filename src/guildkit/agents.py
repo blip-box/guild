@@ -14,9 +14,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
+import sys
+import urllib.error
+import urllib.request
 from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, is_dataclass
@@ -498,6 +502,44 @@ def _jsonable(message: Any) -> Any:
     return {"type": type(message).__name__, "repr": repr(message)}
 
 
+def refresh_identity_token() -> bool:
+    """Fetch a fresh identity token into the token file, in GitHub Actions.
+
+    GitHub's token lives about five minutes, and the SDK reads the file at
+    every exchange, so each agent run starts with a token of its own and a
+    run that follows another in the same job is not refused. Returns whether
+    a token was written; outside Actions, or when the fetch fails, the file
+    is left as it is and the exchange decides.
+    """
+    url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
+    bearer = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+    path = os.environ.get("ANTHROPIC_IDENTITY_TOKEN_FILE")
+    if not (url and bearer and path):
+        return False
+    request = urllib.request.Request(
+        f"{url}&audience=https://api.anthropic.com",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as reply:
+            loaded: Any = json.loads(reply.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        error.close()
+        print(f"identity token not refreshed: HTTP {error.code}", file=sys.stderr)
+        return False
+    except (OSError, ValueError) as error:
+        print(f"identity token not refreshed: {type(error).__name__}", file=sys.stderr)
+        return False
+    value = loaded.get("value") if isinstance(loaded, dict) else None
+    if not isinstance(value, str) or not value:
+        return False
+    target = Path(path)
+    fresh = target.with_name(target.name + ".new")
+    fresh.write_text(value, encoding="ascii")
+    fresh.replace(target)
+    return True
+
+
 async def run(
     prompt: str,
     agent_options: ClaudeAgentOptions,
@@ -515,6 +557,7 @@ async def run(
     The record holds counts, the usage priced by the ledger's table, and the
     structured output when the role asked for one.
     """
+    refresh_identity_token()
     result: ResultMessage | None = None
     tool_calls: Counter[str] = Counter()
     lines: list[str] = []

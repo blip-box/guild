@@ -545,3 +545,74 @@ def test_the_plugin_skill_is_named_as_the_builder_may_invoke_it() -> None:
     assert text.startswith("---\nname: escape-check\n")
     assert agents.SKILLS == ("guild:escape-check",)
     assert agents.PLUGIN_DIR.name == "guild"
+
+
+class _Reply:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+def test_refresh_identity_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import urllib.error
+    import urllib.request
+
+    token = tmp_path / "identity-token"
+    token.write_text("old", encoding="ascii")
+    # Outside Actions nothing happens.
+    for name in (
+        "ACTIONS_ID_TOKEN_REQUEST_URL",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+        "ANTHROPIC_IDENTITY_TOKEN_FILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert agents.refresh_identity_token() is False
+    assert token.read_text(encoding="ascii") == "old"
+    monkeypatch.setenv(
+        "ACTIONS_ID_TOKEN_REQUEST_URL", "https://actions/x?api-version=2"
+    )
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-bearer")
+    monkeypatch.setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", str(token))
+    seen: list[tuple[str, str | None]] = []
+    replies: list[Any] = [_Reply(b'{"value": "fresh-jwt"}')]
+
+    def urlopen(request: Any, timeout: float) -> Any:
+        seen.append((request.full_url, request.get_header("Authorization")))
+        outcome = replies.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert agents.refresh_identity_token() is True
+    assert token.read_text(encoding="ascii") == "fresh-jwt"
+    assert seen == [
+        (
+            "https://actions/x?api-version=2&audience=https://api.anthropic.com",
+            "Bearer request-bearer",
+        )
+    ]
+    # A failed fetch leaves the file as it is.
+    import email.message
+    import io
+
+    replies[:] = [
+        urllib.error.HTTPError(
+            "https://actions/x", 500, "err", email.message.Message(), io.BytesIO(b"x")
+        )
+    ]
+    assert agents.refresh_identity_token() is False
+    assert token.read_text(encoding="ascii") == "fresh-jwt"
+    replies[:] = [_Reply(b'{"value": ""}')]
+    assert agents.refresh_identity_token() is False
+    assert token.read_text(encoding="ascii") == "fresh-jwt"
