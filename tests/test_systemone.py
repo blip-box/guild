@@ -18,6 +18,7 @@ TEXT = (
     "Summary\nskeleton() keeps the Cyrillic a.\nSpecification clause\n"
     "UTS #39 section 4\nCharter\nC-SCOPE-3\nOracle check: confirms\n"
 )
+MISSING_NAMES = [f"missing_{name}" for name in systemone.MISSING_TEXT]
 
 
 class Transport:
@@ -39,24 +40,35 @@ def jev_reply(
     kind: str = "bug",
     kind_p: dict[str, float] | None = None,
     severity: str = "high",
-    clause: str = "UTS #39 section 4",
+    spec: str | None = "UTS #39 section 4",
+    charter: str | None = "C-SCOPE-3",
     missing: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """A reply in TypeSafe's shape."""
-    kind_table = kind_p or {kind: 0.86, "security": 0.14}
+    """A reply in TypeSafe's shape; a clause of None leaves its answer out."""
     answers: dict[str, Any] = {
-        "kind": {"type": "choice", "choice": kind, "probabilities": kind_table},
+        "kind": {
+            "type": "choice",
+            "choice": kind,
+            "probabilities": kind_p or {kind: 0.86, "security": 0.14},
+        },
         "severity": {
             "type": "choice",
             "choice": severity,
             "probabilities": {severity: 0.5, "medium": 0.3, "critical": 0.2},
         },
-        "clause": {
-            "type": "choice",
-            "choice": clause,
-            "probabilities": {clause: 0.99, "none": 0.01},
-        },
     }
+    if spec is not None:
+        answers["spec_clause"] = {
+            "type": "choice",
+            "choice": spec,
+            "probabilities": {spec: 0.99, "none": 0.01},
+        }
+    if charter is not None:
+        answers["charter_clause"] = {
+            "type": "choice",
+            "choice": charter,
+            "probabilities": {charter: 0.9, "none": 0.1},
+        }
     for name in systemone.MISSING_TEXT:
         answers[f"missing_{name}"] = {
             "type": "noul",
@@ -74,7 +86,8 @@ def luna_reply(
     kind: str = "bug",
     kind_p: dict[str, float] | None = None,
     severity: str = "medium",
-    clause: str = "UTS #39 section 4",
+    spec: str | None = "UTS #39 section 4",
+    charter: str | None = "C-SCOPE-3",
     missing: dict[str, float] | None = None,
     cached: int = 0,
 ) -> dict[str, Any]:
@@ -96,13 +109,25 @@ def luna_reply(
             "choice": severity,
             "probabilities": table({severity: 0.59, "high": 0.41}),
         },
-        {
-            "type": "choice",
-            "name": "clause",
-            "choice": clause,
-            "probabilities": table({clause: 1.0, "none": 0.0}),
-        },
     ]
+    if spec is not None:
+        answers.append(
+            {
+                "type": "choice",
+                "name": "spec_clause",
+                "choice": spec,
+                "probabilities": table({spec: 1.0, "none": 0.0}),
+            }
+        )
+    if charter is not None:
+        answers.append(
+            {
+                "type": "choice",
+                "name": "charter_clause",
+                "choice": charter,
+                "probabilities": table({charter: 0.8, "none": 0.2}),
+            }
+        )
     for name in systemone.MISSING_TEXT:
         answers.append(
             {
@@ -130,12 +155,19 @@ def test_typesafe_caller_asks_the_question_set_and_builds_the_record() -> None:
     assert headers == {"Authorization": "Bearer key"}
     assert body["model"] == "jev-1.14.0"
     assert body["state"] == {"issue": TEXT}
-    assert set(body["questions"]) == {"kind", "severity", "clause"} | {
-        f"missing_{name}" for name in systemone.MISSING_TEXT
-    }
-    # The clause can only be a string the text holds, or none.
-    assert list(body["questions"]["clause"]["criteria"]) == [
+    assert list(body["questions"]) == [
+        "kind",
+        "severity",
+        "spec_clause",
+        "charter_clause",
+        *MISSING_NAMES,
+    ]
+    # A clause can only be a string the text holds, or none.
+    assert list(body["questions"]["spec_clause"]["criteria"]) == [
         "UTS #39 section 4",
+        "none",
+    ]
+    assert list(body["questions"]["charter_clause"]["criteria"]) == [
         "C-SCOPE-3",
         "none",
     ]
@@ -154,14 +186,53 @@ def test_typesafe_caller_asks_the_question_set_and_builds_the_record() -> None:
         "cache_write_tokens": 0,
     }
     assert call.probabilities["kind"] == {"bug": 0.86, "security": 0.14}
+    assert call.probabilities["spec_clause"] == {
+        "UTS #39 section 4": 0.99,
+        "none": 0.01,
+    }
     assert call.probabilities["missing"]["summary"] == 0.02
+
+
+def test_the_kind_settles_the_clause_and_the_fields_that_can_be_missing() -> None:
+    # A feature takes the charter clause, and only its own fields count.
+    reply = jev_reply(
+        kind="feature",
+        kind_p={"feature": 0.97},
+        missing={"actual": 0.83, "version": 0.98, "expected": 0.37},
+    )
+    call = systemone.typesafe_caller(Transport(reply), "key")
+    text, _ = call("", TEXT, model="jev-1.14.0", max_tokens=1)
+    assert triage.parse_output(text) == {
+        "kind": "feature",
+        "severity": "high",
+        "clause": "C-SCOPE-3",
+        "missing": [],
+    }
+    reply = jev_reply(
+        kind="feature", kind_p={"feature": 0.97}, missing={"summary": 0.9}
+    )
+    call = systemone.typesafe_caller(Transport(reply), "key")
+    text, _ = call("", TEXT, model="jev-1.14.0", max_tokens=1)
+    assert triage.parse_output(text)["missing"] == ["summary"]
+    # The other kinds carry no clause and no missing fields.
+    reply = jev_reply(
+        kind="question", kind_p={"question": 0.9}, missing={"actual": 1.0}
+    )
+    call = systemone.typesafe_caller(Transport(reply), "key")
+    text, _ = call("", TEXT, model="jev-1.14.0", max_tokens=1)
+    assert triage.parse_output(text) == {
+        "kind": "question",
+        "severity": "high",
+        "clause": None,
+        "missing": [],
+    }
 
 
 def test_thresholds_map_doubt_to_other_and_list_missing_fields() -> None:
     reply = jev_reply(
         kind="bug",
         kind_p={"bug": 0.49, "spam": 0.31, "other": 0.2},
-        clause="none",
+        spec="none",
         missing={"expected": 0.83, "actual": 0.7, "reproducer": 0.71},
     )
     call = systemone.typesafe_caller(Transport(reply), "key")
@@ -169,8 +240,43 @@ def test_thresholds_map_doubt_to_other_and_list_missing_fields() -> None:
     output = triage.parse_output(text)
     assert output["kind"] == "other"  # under KIND_FLOOR
     assert output["clause"] is None
+    assert output["missing"] == []  # not a bug: the fields are the bug form's
+    reply = jev_reply(
+        spec="none", missing={"expected": 0.83, "actual": 0.7, "reproducer": 0.71}
+    )
+    call = systemone.typesafe_caller(Transport(reply), "key")
+    text, _ = call("", TEXT, model="jev-1.14.0", max_tokens=1)
+    output = triage.parse_output(text)
+    assert output["clause"] is None
     # Strictly above the threshold: 0.7 itself is not listed.
     assert output["missing"] == ["expected", "reproducer"]
+
+
+def test_a_text_without_clauses_is_not_asked_about_them() -> None:
+    text = "Hello dev, we provide real github stars.\nOracle check: not_applicable\n"
+    transport = Transport(
+        jev_reply(kind="spam", kind_p={"spam": 0.9}, spec=None, charter=None)
+    )
+    call = systemone.typesafe_caller(transport, "key")
+    reply, _ = call("", text, model="jev-1.14.0", max_tokens=1)
+    assert list(transport.calls[0][2]["questions"]) == [
+        "kind",
+        "severity",
+        *MISSING_NAMES,
+    ]
+    assert triage.parse_output(reply)["clause"] is None
+    assert call.probabilities["spec_clause"] == {}
+    transport = Transport(
+        luna_reply(kind="spam", kind_p={"spam": 0.9}, spec=None, charter=None)
+    )
+    call = systemone.openai_caller(transport, "key")
+    reply, _ = call("", text, model="gpt-6-luna", max_tokens=1)
+    assert [q["name"] for q in transport.calls[0][2]["questions"]] == [
+        "kind",
+        "severity",
+        *MISSING_NAMES,
+    ]
+    assert triage.parse_output(reply)["kind"] == "spam"
 
 
 def test_openai_caller_asks_the_question_set_and_splits_cached_tokens() -> None:
@@ -183,15 +289,23 @@ def test_openai_caller_asks_the_question_set_and_splits_cached_tokens() -> None:
     assert body["model"] == "gpt-6-luna"
     assert body["input"] == TEXT
     names = [q["name"] for q in body["questions"]]
-    assert names[:3] == ["kind", "severity", "clause"]
-    assert names[3:] == [f"missing_{name}" for name in systemone.MISSING_TEXT]
-    clause = body["questions"][2]
-    assert [c["value"] for c in clause["choices"]] == [
+    assert names == [
+        "kind",
+        "severity",
+        "spec_clause",
+        "charter_clause",
+        *MISSING_NAMES,
+    ]
+    assert [c["value"] for c in body["questions"][2]["choices"]] == [
         "UTS #39 section 4",
+        "none",
+    ]
+    assert [c["value"] for c in body["questions"][3]["choices"]] == [
         "C-SCOPE-3",
         "none",
     ]
     assert "the role prompt" not in json.dumps(body)
+    assert "`issue`" not in json.dumps(body)
     assert triage.parse_output(text) == {
         "kind": "bug",
         "severity": "medium",
@@ -207,6 +321,7 @@ def test_openai_caller_asks_the_question_set_and_splits_cached_tokens() -> None:
         "cache_write_tokens": 0,
     }
     assert call.probabilities["severity"] == {"medium": 0.59, "high": 0.41}
+    assert call.probabilities["charter_clause"] == {"C-SCOPE-3": 0.8, "none": 0.2}
 
 
 def test_the_record_passes_the_policy_as_the_anthropic_reply_does() -> None:
@@ -225,9 +340,11 @@ def test_the_record_passes_the_policy_as_the_anthropic_reply_does() -> None:
     [
         ({"answers": None}, "no answers"),
         ({"answers": {}}, "kind: no choice"),
-        (jev_reply(clause="UTS #39 section 5"), "not a candidate"),
+        (jev_reply(spec="UTS #39 section 5"), "not a candidate"),
+        (jev_reply(charter="C-SCOPE-4"), "not a candidate"),
         (jev_reply(kind="urgent", kind_p={"urgent": 1.0}), "kind 'urgent'"),
         (jev_reply(severity="worst"), "severity 'worst'"),
+        (jev_reply(spec=None), "spec_clause: no choice"),
     ],
 )
 def test_rejects_replies_that_do_not_fit(reply: dict[str, Any], message: str) -> None:
@@ -246,16 +363,15 @@ def test_a_missing_predicate_is_an_error_not_a_guess() -> None:
 
 def test_clause_candidates_keep_order_drop_repeats_and_cap() -> None:
     text = "C-SCOPE-1 then UTS #39 section 4, C-SCOPE-1 again, UAX #29 section 3.1.1"
-    assert systemone.clause_candidates(text) == [
-        "UTS #39 section 4",
-        "UAX #29 section 3.1.1",
-        "C-SCOPE-1",
-    ]
+    assert systemone.clause_candidates(text) == (
+        ["UTS #39 section 4", "UAX #29 section 3.1.1"],
+        ["C-SCOPE-1"],
+    )
     many = " ".join(f"C-SCOPE-{n}" for n in range(1, 301))
-    found = systemone.clause_candidates(many)
-    assert len(found) == systemone.MAX_CANDIDATES
-    assert found[0] == "C-SCOPE-1"
-    assert "section" not in "".join(found)
+    spec, charter = systemone.clause_candidates(many)
+    assert spec == []
+    assert len(charter) == systemone.MAX_CANDIDATES
+    assert charter[0] == "C-SCOPE-1"
 
 
 def test_the_question_set_is_the_role_prompts_rubric() -> None:
@@ -268,6 +384,7 @@ def test_the_question_set_is_the_role_prompts_rubric() -> None:
     )
     # The two fields the policy derives from the clause are not asked.
     assert set(systemone.MISSING_TEXT) == set(triage.MISSING) - {"citation", "clause"}
+    assert systemone.FEATURE_FIELDS <= set(systemone.MISSING_TEXT)
 
 
 class FakeReply:
