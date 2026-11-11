@@ -743,9 +743,11 @@ def run_build(
 # The base a cloud session starts from is committed by this name, so the
 # session's own commits are the ones after it.
 _SCRATCH_AUTHOR = "Guild drill"
-# Removed from the scratch base: a public scratch repository would run the
-# adopter's workflows and Dependabot, as the spike's did.
-_SCRATCH_STRIP = (".github",)
+# Emptied in the scratch base, not removed: a public scratch repository would
+# let Dependabot open pull requests, as the spike's did, but the adopter's
+# own tests may check that the file exists, as confusable's charter test
+# does. Workflows stay too; Actions are turned off on the scratch repository.
+_SCRATCH_DEPENDABOT = ".github/dependabot.yml"
 _SESSION = re.compile(
     r"^Claude-Session: https://claude\.ai/code/(session_[A-Za-z0-9]+)$"
 )
@@ -757,7 +759,7 @@ def cloud_prefix(drill: Drill) -> str:
 
 
 def push_scratch_base(drill: Drill, *, source: Path, work: Path, remote: str) -> str:
-    """Push the drill's seeded checkout, less `.github`, as `base` of `remote`.
+    """Push the drill's seeded checkout as `base` of `remote`, Dependabot off.
 
     Nothing after the drill's base commit is reachable from it, as in
     `prepare_checkout`. Returns the commit pushed.
@@ -766,9 +768,10 @@ def push_scratch_base(drill: Drill, *, source: Path, work: Path, remote: str) ->
     directory = Path(drill["directory"])
     seed = directory / inp["seed"] if "seed" in inp else None
     prepare_checkout(source, inp["base"], work, seed=seed)
-    present = [name for name in _SCRATCH_STRIP if (work / name).exists()]
-    if present:
-        git("rm", "-r", "--quiet", *present, cwd=work)
+    dependabot = work / _SCRATCH_DEPENDABOT
+    if dependabot.exists():
+        dependabot.write_text("version: 2\nupdates: []\n", encoding="ascii")
+        git("add", _SCRATCH_DEPENDABOT, cwd=work)
     git(
         *_GIT_IDENTITY,
         "commit",
