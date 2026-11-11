@@ -171,8 +171,21 @@ CI runs exactly these, so a clean local run means a clean CI run.
 
 ## Roadmap
 
-Nothing is queued. One gap stays open: egress filtering of the agent jobs,
-for which GitHub offers no first-party mechanism yet.
+Queued, each its own pull request: land the A/B experiment's harness from
+`spike/m0` (the Bash sandbox, the per-run cache and temp directories, the
+fresh identity token, the Builder's subagents and skill, the System One
+callers and the new drills); let `guildkit triage` take its caller from
+`guild.toml`; harder negative triage drills, then the triage caller
+decision; more build drills, so the noise threshold measures
+something on the build suite; hand-off of a build: keep the Builder's
+session files as an artifact with the transcript's retention, and a
+`/guild` command that resumes the build with the steward's comment as the
+next prompt, under the same gate, sandbox and ledger, first for a build
+that failed twice.
+
+One gap stays open, narrower than before: Bash now runs without network,
+but the model process and the Stop hook's test run are outside any egress
+filter, for which GitHub offers no first-party mechanism yet.
 
 Done: the shell, the triage workflow template, the issue forms, the adopting
 guide, the confusable wiring (`guild.toml`, CODEOWNERS, issue forms, the
