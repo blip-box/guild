@@ -9,6 +9,7 @@ agent's own account of its work is not consulted.
 
 from __future__ import annotations
 
+import ast
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, TypedDict
@@ -119,6 +120,52 @@ def deleted_tests(patch: Patch, tests: Sequence[str]) -> list[str]:
     return gone
 
 
+def _import_bindings(line: str) -> set[tuple[str, int, str, str]] | None:
+    """Return what a one-line import binds, or None for any other line.
+
+    Each binding is (module, level, name, alias): `from . import a as b`
+    is ("", 1, "a", "b") and `import os.path` is ("", 0, "os.path", "").
+    A line that is part of a parenthesised import does not parse alone,
+    so it is not an import here.
+    """
+    try:
+        tree = ast.parse(line.strip())
+    except SyntaxError:
+        return None
+    if len(tree.body) != 1:
+        return None
+    node = tree.body[0]
+    if isinstance(node, ast.Import):
+        return {("", 0, a.name, a.asname or "") for a in node.names}
+    if isinstance(node, ast.ImportFrom):
+        module = node.module or ""
+        return {(module, node.level, a.name, a.asname or "") for a in node.names}
+    return None
+
+
+def deleted_test_lines(patch: Patch, tests: Sequence[str]) -> int:
+    """Return how many lines the patch removes under tests, for the tiers.
+
+    A removed one-line import is not counted when added one-line imports in
+    the same file bind every name it bound, from the same module under the
+    same alias: extending `from m import a` to `from m import a, b` removes
+    nothing a test relied on. Any other removed line counts, an assertion
+    with a clause added to it included.
+    """
+    count = 0
+    for path in patch["paths"]:
+        if not _is_test(path, tests):
+            continue
+        kept: set[tuple[str, int, str, str]] = set()
+        for line in patch["added"][path]:
+            kept |= _import_bindings(line) or set()
+        for line in patch["removed"][path]:
+            bound = _import_bindings(line)
+            if bound is None or not bound <= kept:
+                count += 1
+    return count
+
+
 def new_skips(patch: Patch) -> list[str]:
     """Return the added lines that skip or expect a test to fail."""
     return [
@@ -166,9 +213,7 @@ def check_patch(
         for path in generated_without_generator(patch, rules)
     )
     tests_changed = any(_is_test(p, tests) for p in patch["paths"])
-    deleted_in_tests = sum(
-        len(patch["removed"][p]) for p in patch["paths"] if _is_test(p, tests)
-    )
+    deleted_in_tests = deleted_test_lines(patch, tests)
     decision = tiers.raise_for_shape(
         decision,
         {

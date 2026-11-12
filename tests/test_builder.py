@@ -219,3 +219,49 @@ def test_prompt_adds_the_previous_attempt_after_the_brief() -> None:
         role="ROLE", handbook="HAND", charter="CHART", brief="BRIEF", previous=[]
     )
     assert same == "BRIEF"
+
+
+def test_an_extended_import_is_not_a_deleted_test_line() -> None:
+    # The canary's build drill of 2026-11-10: the Builder added tests and
+    # extended one import, and the import alone made the patch T2.
+    text = diff(
+        ("src/confusable/_skeleton.py", ["    return {}"], ["    return {1}"]),
+        (
+            "tests/test_skeleton.py",
+            ["from confusable import Match, match, skeleton"],
+            [
+                "from confusable import Match, _bidi, match, skeleton",
+                "def test_rlo(): ...",
+            ],
+        ),
+    )
+    patch = builder.parse_diff(text)
+    assert builder.deleted_test_lines(patch, ["tests/**"]) == 0
+    result = check(text)
+    assert result["tier"] == "T1"
+    assert not [r for r in result["reasons"] if "deleted" in r]
+
+
+def test_imports_that_drop_or_move_a_name_still_count() -> None:
+    def count(removed: list[str], added: list[str]) -> int:
+        patch = builder.parse_diff(diff(("tests/test_a.py", removed, added)))
+        return builder.deleted_test_lines(patch, ["tests/**"])
+
+    assert count(["from m import a, b"], ["from m import a"]) == 1
+    assert count(["from m import a"], ["from fake import a"]) == 1
+    assert count(["from m import a"], ["from m import a as b"]) == 1
+    assert count(["from .m import a"], ["from m import a"]) == 1
+    assert count(["import m"], ["import m, n"]) == 0
+    assert count(["from m import a", "from n import b"], ["from m import a, c"]) == 1
+    # Moving an import, or splitting it, keeps every name.
+    assert count(["from m import a, b"], ["from m import a", "from m import b"]) == 0
+    # A line of a parenthesised import is not an import on its own.
+    assert count(["    a,"], ["    a,", "    b,"]) == 1
+
+
+def test_a_weakened_assertion_is_still_a_deleted_test_line() -> None:
+    text = diff(
+        ("tests/test_a.py", ["    assert f(x) == 1"], ["    assert f(x) == 1 or True"])
+    )
+    assert check(text)["tier"] == "T2"
+    assert "lines deleted under tests: at least T2" in check(text)["reasons"]
