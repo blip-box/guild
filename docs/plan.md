@@ -128,6 +128,9 @@ day once the cap is hit.
 Computed by plain code from the paths a change touches and the kind of change.
 The highest tier any rule gives wins. Diff size, deleted code, edited tests,
 dependency or lockfile changes and build configuration can only raise a tier.
+A removed line under the tests counts as deleted code, except a one-line
+import whose every name an added import in the same file binds again
+(row 79).
 Agents and stewards can raise a tier, never lower it. CODEOWNERS and the
 ruleset mirror the tiers (section 12, item 8), and a CI check fails when the
 tier code and they disagree. Approvals are dismissed on a new push.
@@ -465,3 +468,4 @@ found and what it changed.
 | 76 | The Builder stays on the Agent SDK in Actions; a claude.ai cloud session is not a Builder. On three seeded drills at five trials the SDK arm passed fourteen of fifteen and the cloud arm fifteen of fifteen, one trial apart, and a tie keeps the SDK. As run, the cloud arm had open egress, no gate or sandbox of the shell's, a tool list that does not restrict, every account connector attached unless cleared, a push grant held by the session (against row 35), a commit of its own with model text in it, and no cost for the ledger | A/B experiment, 2026-11-11 (`docs/research/ab-experiment-plan.md`) |
 | 77 | Bash runs in the SDK's sandbox with no network in every agent job: bubblewrap and socat on the runner, the sysctl and an unconfined `bwrap` AppArmor profile in place of Ubuntu 26.04's `bwrap-userns-restrict`, a self-check that fails the job when a nested user namespace does not work, and a uv cache and a temp directory per run as the only writable places outside the checkout. The identity token is fetched fresh before every agent run, since GitHub's lives about five minutes | A/B experiment; narrows the egress gap of section 6, where the model process and the Stop hook's test run stay outside |
 | 78 | The Builder may delegate to two subagents defined in code, an explorer on the read tools and a runner on Bash and the read tools, and to one skill from the plugin the package ships; the gate's hook runs inside subagents, any other subagent or skill is refused, forks and built-in agents are off, and nesting is one level | A/B experiment |
+| 79 | A removed one-line import under the tests is not a deleted test line when added one-line imports in the same file bind every name it bound, from the same module under the same alias; every other removed line still counts, a weakened assertion included. The `tier` command, which sees only line counts, keeps counting every removed line | Phase 2; the canary of 2026-11-10 failed the seeded build drill as T2 because the Builder extended one import while adding tests, the likely cause of the drill's four-in-five baseline (guild #26) |

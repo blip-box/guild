@@ -32,6 +32,8 @@ default = "t1"
 [tiers.shape]
 tests = ["tests/**"]
 max_t0_lines = 50
+# Removed lines under tests; a one-line import whose names an added import
+# binds again does not count.
 deleted_tests = "t2"
 deleted_files = "t1"
 changed_tests = "t1"
