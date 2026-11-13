@@ -34,7 +34,7 @@ classifiers = [
 # Code CLI (2.1.316 in 0.2.176), so this pin is the harness pin. The triage
 # jobs install without it; its wheel carries the CLI and is large.
 agents = [
-    "claude-agent-sdk==0.2.176",
+    "claude-agent-sdk==0.2.178",
 ]
 
 [project.scripts]
@@ -50,7 +50,7 @@ build-backend = "uv_build"
 [dependency-groups]
 test = [
     # The same pin as the agents extra; tests/test_package.py checks they match.
-    "claude-agent-sdk==0.2.176",
+    "claude-agent-sdk==0.2.178",
     "hypothesis>=6.168.5",
     "pytest>=9.1.1",
 ]
